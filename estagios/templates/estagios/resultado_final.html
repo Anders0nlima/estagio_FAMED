@@ -1,0 +1,225 @@
+{% extends 'estagios/base.html' %}
+
+{% block title %}Resultado Final e Homologação - {{ edital.titulo }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Cabeçalho -->
+    <div class="border-b border-slate-200 pb-3 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+            <a href="{% url 'dashboard' %}" class="text-xs font-semibold text-blue-600 hover:text-blue-800 transition mb-1 inline-block">
+                ← Voltar aos Editais
+            </a>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900">Resultado Oficial e Classificação Homologada</h1>
+            <p class="text-sm text-slate-500">Edital: <span class="font-medium text-slate-800">{{ edital.titulo }}</span> ({{ edital.semestre }})</p>
+        </div>
+
+        <!-- Botões de Exportação -->
+        <div class="flex items-center space-x-3">
+            <a href="{% url 'exportar_excel' edital.id %}" class="bg-white hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2.5 rounded-xl border border-slate-300 shadow-sm transition flex items-center space-x-2 text-xs">
+                <span>📊</span>
+                <span>Exportar Excel (3 Abas)</span>
+            </a>
+            <a href="{% url 'exportar_pdf' edital.id %}" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-xs">
+                <span>📄</span>
+                <span>Exportar Ofício Oficial (PDF)</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Cards de Resumo da Classificação -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400 font-bold block">Vagas Ofertadas</span>
+            <span class="text-xl font-bold text-slate-800">{{ edital.total_vagas }}</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-emerald-600 font-bold block">Alunos Aprovados</span>
+            <span class="text-xl font-bold text-emerald-700">{{ total_alocados }}</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400 font-bold block">Cadastro Reserva</span>
+            <span class="text-xl font-bold text-slate-700">{{ reserva.count }}</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-pink-600 font-bold block">Presença Feminina</span>
+            <span class="text-xl font-bold text-pink-700">{{ pct_mulheres }}%</span>
+            <span class="text-[10px] text-slate-400 block">({{ mulheres_alocadas }} alunas)</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-purple-600 font-bold block">Alunos Cotistas</span>
+            <span class="text-xl font-bold text-purple-700">{{ pct_cotistas }}%</span>
+            <span class="text-[10px] text-slate-400 block">({{ cotistas_alocados }} cotistas)</span>
+        </div>
+    </div>
+
+    <!-- Abas de Navegação -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden" x-data="{ tab: 'aprovados' }">
+        <div class="flex border-b border-slate-200 bg-slate-50 px-6 pt-3 space-x-6 text-sm font-semibold">
+            <button onclick="mostrarAba('aprovados')" id="btn-aprovados"
+                class="pb-3 border-b-2 border-blue-600 text-blue-700 font-bold flex items-center space-x-2">
+                <span>🎓 Alunos Aprovados por Estágio</span>
+                <span class="bg-blue-100 text-blue-800 text-xs px-2 py-0.5 rounded-full">{{ total_alocados }}</span>
+            </button>
+            <button onclick="mostrarAba('reserva')" id="btn-reserva"
+                class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center space-x-2">
+                <span>📋 Cadastro de Reserva (Suplência)</span>
+                <span class="bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded-full">{{ reserva.count }}</span>
+            </button>
+            <button onclick="mostrarAba('logs')" id="btn-logs"
+                class="pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center space-x-2">
+                <span>🔍 Trilha de Auditoria & Justificativas</span>
+                <span class="bg-slate-200 text-slate-700 text-xs px-2 py-0.5 rounded-full">{{ logs.count }}</span>
+            </button>
+        </div>
+
+        <!-- Conteúdo Aba 1: Aprovados por Estágio -->
+        <div id="aba-aprovados" class="p-6 space-y-6">
+            {% for op in oportunidades %}
+                {% if op.alocados.all %}
+                <div class="border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+                    <div class="bg-slate-50 px-5 py-3 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div>
+                            <span class="text-xs font-bold text-blue-700 uppercase tracking-wide">Opção {{ op.codigo_opcao }}</span>
+                            <h3 class="text-sm font-bold text-slate-900">{{ op.local }}</h3>
+                            <span class="text-xs text-slate-500">Docente Responsável: <b>{{ op.professor }}</b> • Período: {{ op.periodo }}</span>
+                        </div>
+                        <span class="text-xs bg-emerald-100 text-emerald-800 font-bold px-3 py-1 rounded-full self-start sm:self-auto">
+                            {{ op.alocados.count }} / {{ op.vagas_totais }} vaga(s) preenchida(s)
+                        </span>
+                    </div>
+
+                    <table class="w-full text-left text-xs text-slate-600">
+                        <thead class="bg-white text-[11px] font-semibold uppercase text-slate-400 border-b border-slate-100">
+                            <tr>
+                                <th class="px-5 py-2.5">Pos.</th>
+                                <th class="px-5 py-2.5">Estudante</th>
+                                <th class="px-5 py-2.5">Matrícula</th>
+                                <th class="px-5 py-2.5">CRG</th>
+                                <th class="px-5 py-2.5">Opção</th>
+                                <th class="px-5 py-2.5">Critério / Etiqueta de Entrada</th>
+                                <th class="px-5 py-2.5">Contato</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-100">
+                            {% for res in op.alocados.all %}
+                            <tr class="hover:bg-slate-50/60 transition">
+                                <td class="px-5 py-3 font-bold text-slate-700">#{{ res.posicao }}</td>
+                                <td class="px-5 py-3 font-semibold text-slate-900 text-sm">
+                                    {{ res.candidato.nome }}
+                                    <span class="block text-[11px] font-normal text-slate-400">Ciclo {{ res.candidato.ciclo|title }}</span>
+                                </td>
+                                <td class="px-5 py-3 font-mono text-slate-500">{{ res.candidato.matricula }}</td>
+                                <td class="px-5 py-3 font-mono font-bold text-blue-700 text-sm">{{ res.candidato.crg_oficial|floatformat:4 }}</td>
+                                <td class="px-5 py-3">
+                                    <span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium">
+                                        {{ res.opcao_atendida }}
+                                    </span>
+                                </td>
+                                <td class="px-5 py-3">
+                                    {% if 'Ação Afirmativa' in res.etiqueta_motivo %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-pink-100 text-pink-800 border border-pink-200">
+                                        ♀ {{ res.etiqueta_motivo }}
+                                    </span>
+                                    {% elif 'Cota' in res.etiqueta_motivo %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">
+                                        ★ {{ res.etiqueta_motivo }}
+                                    </span>
+                                    {% else %}
+                                    <span class="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold bg-blue-100 text-blue-800 border border-blue-200">
+                                        ✔ {{ res.etiqueta_motivo }}
+                                    </span>
+                                    {% endif %}
+                                </td>
+                                <td class="px-5 py-3 text-slate-500 font-mono text-[11px]">
+                                    {{ res.candidato.telefone }}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+                {% endif %}
+            {% endfor %}
+        </div>
+
+        <!-- Conteúdo Aba 2: Cadastro de Reserva -->
+        <div id="aba-reserva" class="p-6 hidden">
+            <div class="mb-4">
+                <h3 class="text-sm font-bold text-slate-900">Lista Ordenada de Suplência (Cadastro de Reserva)</h3>
+                <p class="text-xs text-slate-500">Alunos classificados por nota e critérios de desempate, prontos para convocação em caso de desistência.</p>
+            </div>
+
+            <div class="overflow-x-auto border border-slate-200 rounded-xl">
+                <table class="w-full text-left text-xs text-slate-600">
+                    <thead class="bg-slate-50 text-[11px] font-semibold uppercase text-slate-400 border-b border-slate-200">
+                        <tr>
+                            <th class="px-5 py-3">Posição</th>
+                            <th class="px-5 py-3">Estudante</th>
+                            <th class="px-5 py-3">Matrícula</th>
+                            <th class="px-5 py-3">CRG</th>
+                            <th class="px-5 py-3">Ciclo</th>
+                            <th class="px-5 py-3">Opções Solicitadas</th>
+                            <th class="px-5 py-3">Modalidade</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        {% for res in reserva %}
+                        <tr class="hover:bg-slate-50/60 transition">
+                            <td class="px-5 py-3 font-bold text-slate-700">#{{ res.posicao }}</td>
+                            <td class="px-5 py-3 font-semibold text-slate-900">{{ res.candidato.nome }}</td>
+                            <td class="px-5 py-3 font-mono text-slate-500">{{ res.candidato.matricula }}</td>
+                            <td class="px-5 py-3 font-mono font-bold text-slate-800">{{ res.candidato.crg_oficial|floatformat:4 }}</td>
+                            <td class="px-5 py-3 uppercase text-[10px] font-medium">{{ res.candidato.ciclo }}</td>
+                            <td class="px-5 py-3 text-slate-500">1ª: {{ res.candidato.op1 }} | 2ª: {{ res.candidato.op2|default:"-" }}</td>
+                            <td class="px-5 py-3">
+                                {% if res.candidato.is_cotista %}
+                                <span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-[10px] font-medium">Cotista</span>
+                                {% else %}
+                                <span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium">Ampla</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Conteúdo Aba 3: Log de Auditoria -->
+        <div id="aba-logs" class="p-6 hidden">
+            <div class="mb-4">
+                <h3 class="text-sm font-bold text-slate-900">Trilha de Auditoria Imutável (Transparência Pública)</h3>
+                <p class="text-xs text-slate-500">Registro cronológico de todas as decisões tomadas pelo algoritmo (notas, cotas, desempates e ações afirmativas).</p>
+            </div>
+
+            <div class="bg-slate-900 text-slate-200 p-4 rounded-xl font-mono text-xs max-h-[500px] overflow-y-auto space-y-1.5 shadow-inner">
+                {% for log in logs %}
+                <div class="{% if 'Ação Afirmativa' in log.registro or 'Troca' in log.registro %}text-pink-400 font-bold{% elif 'Reversão' in log.registro %}text-amber-400{% elif 'RODADA' in log.registro %}text-emerald-400 font-bold border-t border-slate-700 pt-2 mt-2{% else %}text-slate-300{% endif %}">
+                    {{ log.registro }}
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function mostrarAba(nome) {
+    document.getElementById('aba-aprovados').classList.add('hidden');
+    document.getElementById('aba-reserva').classList.add('hidden');
+    document.getElementById('aba-logs').classList.add('hidden');
+
+    document.getElementById('btn-aprovados').className = 'pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center space-x-2';
+    document.getElementById('btn-reserva').className = 'pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center space-x-2';
+    document.getElementById('btn-logs').className = 'pb-3 border-b-2 border-transparent text-slate-500 hover:text-slate-800 flex items-center space-x-2';
+
+    document.getElementById('aba-' + nome).classList.remove('hidden');
+    document.getElementById('btn-' + nome).className = 'pb-3 border-b-2 border-blue-600 text-blue-700 font-bold flex items-center space-x-2';
+}
+</script>
+{% endblock %}
