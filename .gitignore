@@ -1,0 +1,108 @@
+# =============================================================================
+# GITIGNORE - SISTEMA DE SELEÇÃO DE ESTÁGIOS FAMED/UFPA
+# =============================================================================
+
+# --- Dados Sensíveis e Planilhas de Alunos/Docentes (Conformidade LGPD) ---
+# Planilhas Excel de formulários de inscrições e vagas
+*.xlsx
+*.xls
+*.csv
+
+# Documentos e Ofícios em PDF (dados pessoais de alunos e professores)
+*.pdf
+
+# Nomes específicos dos arquivos recebidos e gerados
+"Estágio de Férias FAMED 2026.3 - Triagem de Oportunidades (respostas).xlsx"
+"Estágio de Férias FAMED JULHO 2026 - Candidatura 15.05.26 - 20.05.26 (respostas).xlsx"
+"Oficio - Estagio de Ferias FAMED de Dez.2025 a FEV.2026 GEP_HUJBB .pdf"
+vagas_professores.xlsx
+inscricoes_alunos.xlsx
+forma_ingresso.csv
+resultado_final.pdf
+resultado_detalhado.xlsx
+test_output.pdf
+
+# --- Python & Bytecode ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# --- Ambientes Virtuais (Virtual Environments) ---
+venv/
+.venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# --- Testes e Cobertura (Pytest, Coverage) ---
+.pytest_cache/
+.coverage
+.coverage.*
+nosetests.xml
+coverage.xml
+*.cover
+*.py,cover
+htmlcov/
+.hypothesis/
+.tox/
+
+# --- Configurações Locais e Credenciais (.env) ---
+.env
+.env.local
+.env.*.local
+*.local.env
+
+# --- Django e Banco de Dados Local ---
+*.sqlite3
+db.sqlite3
+db.sqlite3-journal
+media/
+staticfiles/
+
+# --- IDEs e Editores de Código ---
+.vscode/
+.idea/
+*.sublime-workspace
+*.sublime-project
+*.swp
+*.swo
+*~
+
+# --- Arquivos Temporários de Sistema Operacional ---
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Linux
+*~
+.directory
