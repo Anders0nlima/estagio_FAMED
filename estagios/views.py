@@ -14,6 +14,15 @@ from .services import (
     executar_classificacao_edital,
     gerar_pdf_oficial_edital,
     gerar_excel_resultado_edital,
+    gerar_planilha_frequencia_preenchida,
+    importar_planilha_frequencia,
+    salvar_frequencias_em_lote,
+    marcar_todos_aptos,
+    gerar_certificado_individual_pdf,
+    gerar_zip_certificados,
+    disparar_certificados_email,
+    gerar_folha_frequencia_individual_pdf,
+    gerar_zip_folhas_frequencia,
 )
 
 def login_view(request):
@@ -233,3 +242,209 @@ def exportar_excel_view(request, edital_id):
             filename=excel_filename
         )
     raise Http404("Erro ao gerar a planilha Excel.")
+
+
+# =============================================================================
+# MÓDULO PÓS-ESTÁGIO: FREQUÊNCIA, CERTIFICADOS E ENVIO DE E-MAILS
+# =============================================================================
+
+@login_required
+def frequencia_certificados_view(request, edital_id):
+    """Página principal de gestão de frequência pós-estágio e emissão de certificados."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    aprovados_qs = Resultado.objects.filter(edital=edital, status='APROVADO').select_related('candidato', 'oportunidade').order_by('oportunidade__id', 'posicao')
+
+    total_aprovados = aprovados_qs.count()
+    aptos_count = aprovados_qs.filter(concluiu_estagio=True).count()
+    reprovados_count = aprovados_qs.filter(concluiu_estagio=False, frequencia_percentual__isnull=False).count()
+    pendentes_count = total_aprovados - (aptos_count + reprovados_count)
+    emails_enviados_count = aprovados_qs.filter(email_enviado=True).count()
+
+    # Agrupa por oportunidade/professor
+    grupos_professores = []
+    for op in edital.oportunidades.all().order_by('id'):
+        alocados_op = [r for r in aprovados_qs if r.oportunidade_id == op.id]
+        if alocados_op:
+            grupos_professores.append({
+                'oportunidade': op,
+                'professor': op.professor,
+                'local': op.local,
+                'periodo': op.periodo,
+                'carga_horaria': alocados_op[0].carga_horaria_horas if alocados_op else 36,
+                'alocados': alocados_op,
+            })
+
+    modo_simulacao = 'filebased' in settings.EMAIL_BACKEND
+    pasta_simulacao = str(settings.EMAIL_FILE_PATH)
+
+    return render(request, 'estagios/frequencia_certificados.html', {
+        'edital': edital,
+        'grupos_professores': grupos_professores,
+        'total_aprovados': total_aprovados,
+        'aptos_count': aptos_count,
+        'reprovados_count': reprovados_count,
+        'pendentes_count': pendentes_count,
+        'emails_enviados_count': emails_enviados_count,
+        'modo_simulacao': modo_simulacao,
+        'pasta_simulacao': pasta_simulacao,
+    })
+
+@login_required
+def salvar_frequencia_view(request, edital_id):
+    """Salva os percentuais de frequência e status preenchidos no formulário web."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        total = salvar_frequencias_em_lote(edital, request.POST)
+        messages.success(request, f"Frequências e status atualizados com sucesso ({total} alunos processados)!")
+    return redirect('frequencia_certificados', edital_id=edital.id)
+
+@login_required
+def marcar_todos_aptos_view(request, edital_id):
+    """Atalho rápido para marcar 100% de presença para todos os aprovados."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        qtd = marcar_todos_aptos(edital)
+        messages.success(request, f"Todos os {qtd} alunos aprovados foram homologados com 100% de frequência (Aptos)!")
+    return redirect('frequencia_certificados', edital_id=edital.id)
+
+@login_required
+def exportar_planilha_frequencia_view(request, edital_id):
+    """Gera e faz o download da planilha Excel pré-preenchida para os professores."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    output_filename = f"Frequencia_Estagio_FAMED_{edital.semestre}.xlsx"
+    pasta_temp = os.path.join(settings.MEDIA_ROOT, f"temp_{edital.id}")
+    os.makedirs(pasta_temp, exist_ok=True)
+    output_path = os.path.join(pasta_temp, output_filename)
+
+    gerar_planilha_frequencia_preenchida(edital, output_path)
+
+    if os.path.exists(output_path):
+        return FileResponse(
+            open(output_path, 'rb'),
+            content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            filename=output_filename
+        )
+    raise Http404("Erro ao gerar a planilha de frequência.")
+
+@login_required
+def upload_planilha_frequencia_view(request, edital_id):
+    """Importa a planilha Excel preenchida com as frequências informadas pelos professores."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        arquivo = request.FILES.get('arquivo_frequencia')
+        if not arquivo:
+            messages.error(request, "Nenhum arquivo Excel de frequência selecionado.")
+            return redirect('frequencia_certificados', edital_id=edital.id)
+
+        pasta_temp = os.path.join(settings.MEDIA_ROOT, f"upload_freq_{edital.id}")
+        os.makedirs(pasta_temp, exist_ok=True)
+        caminho_salvo = os.path.join(pasta_temp, arquivo.name)
+        with open(caminho_salvo, 'wb+') as dest:
+            for chunk in arquivo.chunks():
+                dest.write(chunk)
+
+        res = importar_planilha_frequencia(edital, caminho_salvo)
+        messages.success(
+            request,
+            f"Planilha de frequência importada com sucesso! {res['atualizados']} alunos analisados "
+            f"({res['aptos']} aptos e {res['reprovados']} com frequência insuficiente)."
+        )
+    return redirect('frequencia_certificados', edital_id=edital.id)
+
+@login_required
+def baixar_certificado_individual_view(request, resultado_id):
+    """Gera e faz o download do Certificado individual em PDF de um aluno aprovado."""
+    resultado = get_object_or_404(Resultado.objects.select_related('candidato', 'oportunidade', 'edital'), id=resultado_id)
+    
+    pasta_cert = os.path.join(settings.MEDIA_ROOT, f"certificados_edital_{resultado.edital.id}")
+    os.makedirs(pasta_cert, exist_ok=True)
+    
+    safe_name = "".join(c for c in resultado.candidato.nome if c.isalnum() or c in (' ', '_', '-')).rstrip()
+    pdf_filename = f"Certificado_FAMED_{resultado.candidato.matricula}_{safe_name}.pdf"
+    pdf_path = os.path.join(pasta_cert, pdf_filename)
+    
+    gerar_certificado_individual_pdf(resultado, pdf_path)
+    
+    if os.path.exists(pdf_path):
+        return FileResponse(open(pdf_path, 'rb'), content_type='application/pdf', filename=pdf_filename)
+    raise Http404("Erro ao gerar o certificado em PDF.")
+
+@login_required
+def baixar_certificados_zip_view(request, edital_id):
+    """Empacota e faz o download de todos os certificados dos alunos aptos em um arquivo ZIP."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    
+    concluintes_count = Resultado.objects.filter(edital=edital, status='APROVADO', concluiu_estagio=True).count()
+    if concluintes_count == 0:
+        messages.warning(request, "Nenhum aluno concluinte (Apto) encontrado para gerar certificados no momento.")
+        return redirect('frequencia_certificados', edital_id=edital.id)
+
+    zip_filename = f"Certificados_Conclusao_FAMED_{edital.semestre}.zip"
+    zip_path = os.path.join(settings.MEDIA_ROOT, zip_filename)
+
+    gerar_zip_certificados(edital, zip_path)
+
+    if os.path.exists(zip_path):
+        return FileResponse(open(zip_path, 'rb'), content_type='application/zip', filename=zip_filename)
+    raise Http404("Erro ao gerar o arquivo ZIP de certificados.")
+
+@login_required
+def enviar_certificados_email_view(request, edital_id):
+    """Dispara os certificados por e-mail para todos os alunos concluintes."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        concluintes_count = Resultado.objects.filter(edital=edital, status='APROVADO', concluiu_estagio=True).count()
+        if concluintes_count == 0:
+            messages.warning(request, "Nenhum aluno concluinte (Apto) registrado para envio de certificados.")
+            return redirect('frequencia_certificados', edital_id=edital.id)
+
+        email_teste = request.POST.get('email_teste', '').strip() or None
+        res = disparar_certificados_email(edital, email_teste_destino=email_teste)
+
+        if res['modo_simulacao']:
+            messages.success(
+                request,
+                f"🛡️ Simulação Concluída: {res['enviados_sucesso']} e-mails com certificados foram gerados e armazenados com segurança "
+                f"na pasta local 'media/emails_simulados/'. Nenhum e-mail real foi enviado aos estudantes."
+            )
+        else:
+            messages.success(
+                request,
+                f"✉️ Sucesso: {res['enviados_sucesso']} certificados foram despachados com sucesso via servidor SMTP institucional!"
+            )
+
+        if res['erros']:
+            messages.error(request, f"Atenção: Ocorreram erros no envio para {len(res['erros'])} discentes.")
+    return redirect('frequencia_certificados', edital_id=edital.id)
+
+
+@login_required
+def baixar_folha_frequencia_individual_view(request, resultado_id):
+    """Gera e baixa a folha de presença diária em PDF (modelo FAMED) pré-preenchida para o aluno."""
+    resultado = get_object_or_404(Resultado.objects.select_related('candidato', 'oportunidade', 'edital'), id=resultado_id)
+    pasta_temp = os.path.join(settings.MEDIA_ROOT, f"folhas_freq_{resultado.edital.id}")
+    os.makedirs(pasta_temp, exist_ok=True)
+
+    safe_name = "".join(c for c in resultado.candidato.nome if c.isalnum() or c in (' ', '_', '-')).rstrip()
+    pdf_filename = f"Folha_Frequencia_{resultado.candidato.matricula}_{safe_name}.pdf"
+    pdf_path = os.path.join(pasta_temp, pdf_filename)
+
+    gerar_folha_frequencia_individual_pdf(resultado, pdf_path)
+
+    if os.path.exists(pdf_path):
+        return FileResponse(open(pdf_path, 'rb'), content_type='application/pdf', filename=pdf_filename)
+    raise Http404("Erro ao gerar a folha de frequência em PDF.")
+
+
+@login_required
+def baixar_folhas_frequencia_zip_view(request, edital_id):
+    """Gera um arquivo ZIP com todas as folhas de presença diárias em PDF dos alunos aprovados."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    zip_filename = f"Folhas_Frequencia_Diaria_FAMED_{edital.semestre}.zip"
+    zip_path = os.path.join(settings.MEDIA_ROOT, zip_filename)
+
+    gerar_zip_folhas_frequencia(edital, zip_path)
+
+    if os.path.exists(zip_path):
+        return FileResponse(open(zip_path, 'rb'), content_type='application/zip', filename=zip_filename)
+    raise Http404("Erro ao gerar o arquivo ZIP de folhas de frequência.")

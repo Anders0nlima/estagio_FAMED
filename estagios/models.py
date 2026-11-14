@@ -116,6 +116,22 @@ class Resultado(models.Model):
     opcao_atendida = models.CharField(max_length=50, blank=True)  # "1ª Opção", "2ª Opção"
     etiqueta_motivo = models.CharField(max_length=255, blank=True)
 
+    # --- Campos de Frequência e Pós-Estágio ---
+    frequencia_percentual = models.FloatField(null=True, blank=True, verbose_name="% de Frequência")
+    concluiu_estagio = models.BooleanField(default=False, verbose_name="Concluiu com Frequência Suficiente (>=75%)")
+    justificativa_frequencia = models.CharField(max_length=255, blank=True, default="Pendente de confirmação")
+    carga_horaria_horas = models.IntegerField(default=36, verbose_name="Carga Horária (horas)")
+    
+    # --- Certificado e Autenticidade ---
+    certificado_arquivo = models.FileField(upload_to='certificados/', null=True, blank=True)
+    certificado_codigo = models.CharField(max_length=64, blank=True, verbose_name="Código de Autenticidade Único")
+    certificado_gerado_em = models.DateTimeField(null=True, blank=True)
+    
+    # --- Envio por E-mail ---
+    email_enviado = models.BooleanField(default=False, verbose_name="Certificado Enviado por E-mail")
+    email_enviado_em = models.DateTimeField(null=True, blank=True)
+    email_log = models.CharField(max_length=255, blank=True)
+
     class Meta:
         ordering = ['oportunidade__id', 'posicao', '-candidato__crg_oficial']
 

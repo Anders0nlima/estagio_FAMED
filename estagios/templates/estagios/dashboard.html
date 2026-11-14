@@ -113,8 +113,11 @@
                         </td>
                         <td class="px-6 py-4 text-right space-x-2">
                             {% if edital.status == 'CLASSIFICADO' %}
-                            <a href="{% url 'resultado_final' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-medium shadow-sm transition">
+                            <a href="{% url 'resultado_final' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition">
                                 Ver Resultado
+                            </a>
+                            <a href="{% url 'frequencia_certificados' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition">
+                                🎓 Frequência & Certificados
                             </a>
                             <a href="{% url 'exportar_pdf' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium border border-slate-300 transition">
                                 PDF

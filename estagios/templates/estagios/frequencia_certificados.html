@@ -1,0 +1,400 @@
+{% extends 'estagios/base.html' %}
+
+{% block title %}Frequência & Certificados - {{ edital.titulo }}{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Cabeçalho & Breadcrumbs -->
+    <div class="border-b border-slate-200 pb-4 flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
+        <div>
+            <div class="flex items-center space-x-2 text-xs font-semibold text-blue-600 mb-1">
+                <a href="{% url 'dashboard' %}" class="hover:text-blue-800 transition">Dashboard</a>
+                <span class="text-slate-400">/</span>
+                <a href="{% url 'resultado_final' edital.id %}" class="hover:text-blue-800 transition">Resultado do Edital</a>
+                <span class="text-slate-400">/</span>
+                <span class="text-slate-600">Pós-Estágio & Certificados</span>
+            </div>
+            <h1 class="text-2xl font-bold tracking-tight text-slate-900">Gestão de Frequência e Certificação Oficial</h1>
+            <p class="text-sm text-slate-500">
+                Processo: <span class="font-medium text-slate-800">{{ edital.titulo }}</span> ({{ edital.semestre }}) • Carga Horária Padrão: <span class="font-semibold text-slate-700">36h</span> • Critério: <span class="font-semibold text-emerald-700">Assiduidade &ge; 75%</span>
+            </p>
+        </div>
+
+        <!-- Ações Rápidas de Exportação / Envio -->
+        <div class="flex flex-wrap items-center gap-2">
+            <a href="{% url 'resultado_final' edital.id %}" class="bg-white hover:bg-slate-50 text-slate-700 font-semibold px-3.5 py-2 rounded-xl border border-slate-300 shadow-sm transition flex items-center space-x-1.5 text-xs">
+                <span>📋</span>
+                <span>Ver Classificação</span>
+            </a>
+            <a href="{% url 'baixar_certificados_zip' edital.id %}" class="bg-amber-600 hover:bg-amber-700 text-white font-semibold px-3.5 py-2 rounded-xl shadow-sm transition flex items-center space-x-1.5 text-xs">
+                <span>📦</span>
+                <span>Baixar Todos os Certificados (.ZIP)</span>
+            </a>
+            <button onclick="document.getElementById('modal-email').classList.remove('hidden')" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-3.5 py-2 rounded-xl shadow-md transition flex items-center space-x-1.5 text-xs">
+                <span>✉️</span>
+                <span>Disparar Certificados por E-mail</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Banner Informativo de Simulação Segura -->
+    {% if modo_simulacao %}
+    <div class="bg-blue-50 border-l-4 border-blue-600 p-4 rounded-r-xl flex items-start space-x-3 text-xs text-blue-900">
+        <span class="text-lg">🛡️</span>
+        <div>
+            <p class="font-bold">Modo de Segurança Ativo (Simulação Local de E-mails)</p>
+            <p class="text-blue-700 mt-0.5">
+                Os envios por e-mail são gravados localmente como arquivos de log em <code class="bg-blue-100 px-1 py-0.5 rounded text-blue-900 font-mono">{{ pasta_simulacao }}</code>. 
+                Nenhum e-mail real será enviado para as caixas de entrada dos alunos durante os testes.
+            </p>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Indicadores de Status Pós-Estágio -->
+    <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-slate-400 font-bold block">Aprovados no Edital</span>
+            <span class="text-2xl font-bold text-slate-800">{{ total_aprovados }}</span>
+            <span class="text-[10px] text-slate-400 block">Vagas preenchidas</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-emerald-600 font-bold block">Aptos (&ge; 75%)</span>
+            <span class="text-2xl font-bold text-emerald-700">{{ aptos_count }}</span>
+            <span class="text-[10px] text-emerald-600 block">Com direito a certificado</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-rose-600 font-bold block">Frequência Insuficiente</span>
+            <span class="text-2xl font-bold text-rose-700">{{ reprovados_count }}</span>
+            <span class="text-[10px] text-rose-500 block">&lt; 75% ou desistentes</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-amber-600 font-bold block">Aguardando Lançamento</span>
+            <span class="text-2xl font-bold text-amber-700">{{ pendentes_count }}</span>
+            <span class="text-[10px] text-amber-500 block">Pendentes de avaliação</span>
+        </div>
+
+        <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
+            <span class="text-[11px] uppercase tracking-wider text-blue-600 font-bold block">E-mails Processados</span>
+            <span class="text-2xl font-bold text-blue-700">{{ emails_enviados_count }}</span>
+            <span class="text-[10px] text-blue-500 block">Certificados entregues</span>
+        </div>
+    </div>
+
+    <!-- Barra de Ferramentas de Frequência -->
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-4">
+        <div>
+            <h3 class="text-sm font-bold text-slate-800">Coleta e Homologação de Frequência</h3>
+            <p class="text-xs text-slate-500">
+                Você pode baixar a planilha com todos os alunos para envio aos supervisores, importar o Excel preenchido ou lançar diretamente na grade abaixo.
+            </p>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+            <!-- 1. Download da Planilha Excel Pré-Preenchida para envio aos professores -->
+            <a href="{% url 'exportar_planilha_frequencia' edital.id %}" class="bg-white hover:bg-slate-50 text-slate-700 font-semibold px-3 py-2 rounded-xl text-xs border border-slate-300 shadow-2xs transition flex items-center space-x-1.5" title="Baixa a planilha com os alunos agrupados por professor para envio e preenchimento">
+                <span>📥</span>
+                <span>Planilha Pré-Preenchida (.xlsx)</span>
+            </a>
+
+            <!-- 2. Download das Folhas de Presença Diária em PDF (Modelo FAMED) -->
+            <a href="{% url 'baixar_folhas_frequencia_zip' edital.id %}" class="bg-white hover:bg-slate-50 text-blue-700 font-semibold px-3 py-2 rounded-xl text-xs border border-blue-200 shadow-2xs transition flex items-center space-x-1.5" title="Baixa as folhas de frequência diária oficiais em PDF pré-preenchidas para assinatura dos estagiários">
+                <span>📋</span>
+                <span>Folhas de Presença Diária (.ZIP)</span>
+            </a>
+
+            <!-- 3. Botão para o Diretor IMPORTAR / SUBIR o Excel preenchido pelos professores -->
+            <button onclick="document.getElementById('modal-upload-freq').classList.remove('hidden')" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-3.5 py-2 rounded-xl text-xs shadow-sm transition flex items-center space-x-1.5" title="Enviar para o sistema a planilha preenchida que os professores devolveram">
+                <span>📤</span>
+                <span>Importar Planilha Preenchida</span>
+            </button>
+
+            <!-- 4. Botão Homologar Todos como 100% -->
+            <button onclick="document.getElementById('modal-marcar-todos').classList.remove('hidden')" class="bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-semibold px-3 py-2 rounded-xl text-xs border border-emerald-300 transition flex items-center space-x-1.5">
+                <span>⚡</span>
+                <span>Marcar Todos 100%</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Formulário Principal: Lançamento em Lote Agrupado por Professor -->
+    <form method="POST" action="{% url 'salvar_frequencia' edital.id %}" id="form-frequencias" class="space-y-6">
+        {% csrf_token %}
+
+        {% for g in grupos_professores %}
+        <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <!-- Cabeçalho do Grupo (Professor / Serviço) -->
+            <div class="bg-slate-50 border-b border-slate-200 px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <div>
+                    <div class="flex items-center space-x-2">
+                        <span class="text-xs font-bold uppercase tracking-wider bg-blue-100 text-blue-800 px-2 py-0.5 rounded">
+                            Opção {{ g.oportunidade.codigo_opcao }}
+                        </span>
+                        <h2 class="text-base font-bold text-slate-900">{{ g.professor }}</h2>
+                    </div>
+                    <p class="text-xs text-slate-500 mt-0.5">
+                        Local: <span class="font-medium text-slate-700">{{ g.local }}</span> • Período: <span class="font-medium text-slate-700">{{ g.periodo }}</span> • Carga: <span class="font-medium text-slate-700">{{ g.carga_horaria }}h</span>
+                    </p>
+                </div>
+                <div class="text-right">
+                    <span class="text-xs font-semibold text-slate-500 bg-white px-2.5 py-1 rounded-lg border border-slate-200 shadow-2xs">
+                        {{ g.alocados|length }} estagiário(s)
+                    </span>
+                </div>
+            </div>
+
+            <!-- Tabela de Alunos do Professor -->
+            <div class="overflow-x-auto">
+                <table class="w-full text-left text-xs text-slate-600">
+                    <thead class="bg-slate-50/50 uppercase text-[11px] font-semibold text-slate-500 border-b border-slate-100">
+                        <tr>
+                            <th class="px-6 py-3">Matrícula & Aluno</th>
+                            <th class="px-6 py-3">Contato Institucional</th>
+                            <th class="px-6 py-3 w-32">Frequência (%)</th>
+                            <th class="px-6 py-3 w-48">Status Conclusão</th>
+                            <th class="px-6 py-3">Situação Atual</th>
+                            <th class="px-6 py-3 text-right">Ações & Certificado</th>
+                        </tr>
+                    </thead>
+                    <tbody class="divide-y divide-slate-100">
+                        {% for r in g.alocados %}
+                        <tr class="hover:bg-slate-50/60 transition">
+                            <!-- Aluno -->
+                            <td class="px-6 py-3.5">
+                                <span class="font-bold text-slate-900 block text-sm">{{ r.candidato.nome }}</span>
+                                <span class="text-[11px] text-slate-400 font-mono">Matrícula: {{ r.candidato.matricula }} • {{ r.candidato.ciclo|upper }}</span>
+                            </td>
+
+                            <!-- E-mail -->
+                            <td class="px-6 py-3.5">
+                                <span class="text-slate-700 block font-mono">{{ r.candidato.email }}</span>
+                                <span class="text-[10px] text-slate-400">{{ r.candidato.telefone }}</span>
+                            </td>
+
+                            <!-- Input de % Frequência -->
+                            <td class="px-6 py-3.5">
+                                <div class="flex items-center space-x-1">
+                                    <input 
+                                        type="number" 
+                                        name="freq_{{ r.id }}" 
+                                        step="0.1" 
+                                        min="0" 
+                                        max="100" 
+                                        value="{{ r.frequencia_percentual|default_if_none:'' }}" 
+                                        placeholder="ex: 100" 
+                                        class="w-20 px-2 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-center"
+                                    >
+                                    <span class="text-slate-400 font-semibold">%</span>
+                                </div>
+                            </td>
+
+                            <!-- Select de Status Conclusão -->
+                            <td class="px-6 py-3.5">
+                                <select 
+                                    name="status_{{ r.id }}" 
+                                    class="w-full px-2.5 py-1.5 text-xs font-medium text-slate-800 bg-white border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                                >
+                                    <option value="APTO" {% if r.concluiu_estagio %}selected{% endif %}>🟢 Apto (&ge; 75%)</option>
+                                    <option value="REPROVADO" {% if not r.concluiu_estagio and r.frequencia_percentual is not None %}selected{% endif %}>🔴 Reprovado (&lt; 75%)</option>
+                                    <option value="PENDENTE" {% if not r.concluiu_estagio and r.frequencia_percentual is None %}selected{% endif %}>🟡 Pendente</option>
+                                </select>
+                            </td>
+
+                            <!-- Situação / Justificativa Atual -->
+                            <td class="px-6 py-3.5">
+                                {% if r.concluiu_estagio %}
+                                <div class="flex flex-col">
+                                    <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-emerald-100 text-emerald-800 w-max">
+                                        ● Concluído ({{ r.frequencia_percentual|floatformat:1 }}%)
+                                    </span>
+                                    {% if r.certificado_codigo %}
+                                    <span class="text-[10px] text-slate-400 font-mono mt-0.5">Cód: {{ r.certificado_codigo }}</span>
+                                    {% endif %}
+                                </div>
+                                {% elif r.frequencia_percentual is not None %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-bold bg-rose-100 text-rose-800 w-max">
+                                    ● Insuficiente ({{ r.frequencia_percentual|floatformat:1 }}%)
+                                </span>
+                                {% else %}
+                                <span class="inline-flex items-center px-2 py-0.5 rounded text-[11px] font-medium bg-amber-100 text-amber-800 w-max">
+                                    ● Aguardando Nota
+                                </span>
+                                {% endif %}
+
+                                {% if r.email_enviado %}
+                                <span class="inline-flex items-center text-[10px] text-blue-600 font-medium mt-1">
+                                    ✉️ E-mail enviado
+                                </span>
+                                {% endif %}
+                            </td>
+
+                            <!-- Ações: Folha de Frequência Diária e Certificado Individual -->
+                            <td class="px-6 py-3.5 text-right space-x-1.5 whitespace-nowrap">
+                                <!-- Folha Diária Pré-preenchida (Modelo FAMED) -->
+                                <a 
+                                    href="{% url 'baixar_folha_frequencia_individual' r.id %}" 
+                                    target="_blank" 
+                                    class="inline-flex items-center px-2 py-1 bg-white hover:bg-slate-100 text-slate-700 font-medium text-xs rounded-lg border border-slate-300 shadow-2xs transition space-x-1"
+                                    title="Baixar Lista de Frequência Diária oficial pré-preenchida em PDF"
+                                >
+                                    <span>📋</span>
+                                    <span>Folha Diária</span>
+                                </a>
+
+                                <!-- Certificado Oficial em PDF -->
+                                {% if r.concluiu_estagio %}
+                                <a 
+                                    href="{% url 'baixar_certificado_individual' r.id %}" 
+                                    target="_blank" 
+                                    class="inline-flex items-center px-2.5 py-1 bg-white hover:bg-slate-100 text-blue-700 font-semibold text-xs rounded-lg border border-blue-300 shadow-2xs transition space-x-1"
+                                    title="Baixar Certificado Oficial de Conclusão em PDF"
+                                >
+                                    <span>📄</span>
+                                    <span>Certificado PDF</span>
+                                </a>
+                                {% else %}
+                                <span class="text-[11px] text-slate-400 italic">Certificado pendente</span>
+                                {% endif %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        {% empty %}
+        <div class="bg-white rounded-2xl p-12 text-center border border-slate-200 shadow-sm">
+            <span class="text-4xl block mb-2">📂</span>
+            <h3 class="text-base font-semibold text-slate-800">Nenhum aluno aprovado neste edital</h3>
+            <p class="text-xs text-slate-500 mt-1">Execute a etapa de classificação primeiro para carregar a lista de estagiários.</p>
+        </div>
+        {% endfor %}
+
+        <!-- Barra Inferior de Ação: Salvar Frequências -->
+        {% if grupos_professores %}
+        <div class="sticky bottom-4 z-40 bg-white/95 backdrop-blur-md border border-slate-200 shadow-lg rounded-2xl p-4 flex items-center justify-between">
+            <div class="flex items-center space-x-2 text-xs text-slate-600">
+                <span>ℹ️</span>
+                <span>As alterações de frequência e status são aplicadas imediatamente ao salvar. Alunos com status <b>Apto</b> terão seus certificados liberados.</span>
+            </div>
+            <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-6 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-sm">
+                <span>💾</span>
+                <span>Salvar Todas as Frequências</span>
+            </button>
+        </div>
+        {% endif %}
+    </form>
+</div>
+
+<!-- MODAL 1: Upload de Planilha de Frequência -->
+<div id="modal-upload-freq" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
+                <span>📤</span>
+                <span>Importar Planilha de Frequência</span>
+            </h3>
+            <button onclick="document.getElementById('modal-upload-freq').classList.add('hidden')" class="text-slate-400 hover:text-slate-600 font-bold text-lg">
+                &times;
+            </button>
+        </div>
+        <form method="POST" action="{% url 'upload_planilha_frequencia' edital.id %}" enctype="multipart/form-data" class="space-y-4 mt-4">
+            {% csrf_token %}
+            <p class="text-xs text-slate-600">
+                Envie o arquivo Excel (.xlsx) contendo as colunas de <b>Matrícula</b>, <b>% Frequência</b> ou <b>Status Conclusão</b> preenchidas pelos professores.
+            </p>
+            <div class="border-2 border-dashed border-slate-300 rounded-xl p-6 text-center hover:border-blue-500 transition">
+                <input type="file" name="arquivo_frequencia" accept=".xlsx, .xls" required class="block w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-xl file:border-0 file:text-xs file:font-semibold file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100 cursor-pointer">
+            </div>
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="document.getElementById('modal-upload-freq').classList.add('hidden')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition">
+                    Cancelar
+                </button>
+                <button type="submit" class="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 text-xs font-semibold rounded-xl shadow transition">
+                    Processar Planilha
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL 2: Homologar Todos como 100% -->
+<div id="modal-marcar-todos" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+        <div class="flex items-center space-x-3 text-emerald-600 mb-3">
+            <span class="text-2xl">⚡</span>
+            <h3 class="text-base font-bold text-slate-900">Homologar 100% em Lote</h3>
+        </div>
+        <p class="text-xs text-slate-600 leading-relaxed">
+            Deseja marcar todos os <b>{{ total_aprovados }}</b> alunos aprovados deste edital com <b>100% de frequência</b> e status <b>Apto</b>? 
+            Esta ação pode ser ajustada individualmente depois caso algum aluno tenha faltado.
+        </p>
+        <form method="POST" action="{% url 'marcar_todos_aptos' edital.id %}" class="flex justify-end space-x-2 mt-6">
+            {% csrf_token %}
+            <button type="button" onclick="document.getElementById('modal-marcar-todos').classList.add('hidden')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition">
+                Cancelar
+            </button>
+            <button type="submit" class="bg-emerald-600 hover:bg-emerald-700 text-white px-5 py-2 text-xs font-semibold rounded-xl shadow transition">
+                Confirmar 100% para Todos
+            </button>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL 3: Disparo de Certificados por E-mail -->
+<div id="modal-email" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <h3 class="text-base font-bold text-slate-900 flex items-center space-x-2">
+                <span>✉️</span>
+                <span>Envio de Certificados por E-mail</span>
+            </h3>
+            <button onclick="document.getElementById('modal-email').classList.remove('hidden')" class="text-slate-400 hover:text-slate-600 font-bold text-lg" onclick="document.getElementById('modal-email').classList.add('hidden')">
+                &times;
+            </button>
+        </div>
+
+        <form method="POST" action="{% url 'enviar_certificados_email' edital.id %}" class="space-y-4 mt-4">
+            {% csrf_token %}
+
+            <div class="bg-emerald-50 border border-emerald-200 rounded-xl p-3 text-xs text-emerald-900">
+                <p class="font-bold">🎓 Destinatários Válidos:</p>
+                <p class="mt-0.5">O sistema disparará o e-mail <b>exclusivamente para os {{ aptos_count }} alunos homologados como Aptos (&ge; 75%)</b>. Alunos reprovados ou pendentes não receberão mensagem.</p>
+            </div>
+
+            {% if modo_simulacao %}
+            <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-900">
+                <p class="font-bold">🛡️ Proteção Ativa contra Spams e Vazamentos:</p>
+                <p class="mt-0.5">O sistema está configurado em <b>modo seguro de simulação local</b>. Os e-mails e anexos em PDF serão salvos localmente na pasta <code class="bg-amber-100 px-1 py-0.5 rounded font-mono">media/emails_simulados/</code> para auditoria e teste, sem trafegar pela internet.</p>
+            </div>
+            {% endif %}
+
+            <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">
+                    Redirecionar todos os e-mails para um e-mail de teste (Opcional):
+                </label>
+                <input 
+                    type="email" 
+                    name="email_teste" 
+                    placeholder="ex: diretor.famed@ufpa.br (deixe vazio para manter destinatário real)" 
+                    class="w-full px-3 py-2 text-xs border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono"
+                >
+                <span class="text-[10px] text-slate-400 mt-1 block">Útil para testar o recebimento em uma caixa postal específica.</span>
+            </div>
+
+            <div class="flex justify-end space-x-2 pt-2">
+                <button type="button" onclick="document.getElementById('modal-email').classList.add('hidden')" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-xl transition">
+                    Cancelar
+                </button>
+                <button type="submit" class="bg-blue-700 hover:bg-blue-800 text-white px-5 py-2 text-xs font-semibold rounded-xl shadow transition flex items-center space-x-1.5">
+                    <span>🚀</span>
+                    <span>Confirmar e Disparar Certificados</span>
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

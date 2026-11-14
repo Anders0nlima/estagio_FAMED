@@ -1,18 +1,38 @@
 # -*- coding: utf-8 -*-
 """
 Serviços de Negócio da Plataforma de Estágios FAMED/UFPA
-Integra a higienização de formulários, auditoria do semáforo, motor de classificação e exportações.
+Integra a higienização de formulários, auditoria do semáforo, motor de classificação,
+gestão de frequência pós-estágio, geração de certificados em PDF e disparo seguro de e-mails.
 """
 
 import os
 import re
 import math
+import hashlib
+import zipfile
 import datetime
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Tuple, Any, Optional
 
 import pandas as pd
 from django.conf import settings
 from django.utils import timezone
+from django.core.mail import EmailMultiAlternatives
+
+# ReportLab imports para Certificados e Relatórios
+from reportlab.lib.pagesizes import A4, landscape
+from reportlab.lib import colors
+from reportlab.lib.units import cm, mm
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    Image,
+    KeepTogether,
+)
+from reportlab.pdfgen import canvas
 
 from .models import Edital, Oportunidade, Candidato, Resultado, LogDecisao
 from classificador import (
@@ -32,13 +52,13 @@ from classificador import (
     generate_pdf_report,
 )
 
+
+# =============================================================================
+# 1. IMPORTAÇÃO E AUDITORIA DO SEMÁFORO
+# =============================================================================
+
 def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
-    """
-    Importa as planilhas de vagas, alunos e CSV de cotas para o banco de dados.
-    Classifica automaticamente cada candidato no Semáforo de Auditoria.
-    """
-    # 1. Carregar Oportunidades no Banco
-    # Limpa dados anteriores do edital se houver reimportação
+    """Importa as planilhas de vagas, alunos e CSV de cotas para o banco de dados."""
     edital.oportunidades.all().delete()
     edital.candidatos.all().delete()
     edital.resultados.all().delete()
@@ -58,7 +78,6 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         )
         vagas_map[op['id']] = obj
 
-    # 2. Carregar CSV de Forma de Ingresso (Cotas) se enviado
     cotas_dict = {}
     csv_path = edital.arquivo_ingresso.path if edital.arquivo_ingresso else 'forma_ingresso.csv'
     if not os.path.exists(csv_path) and os.path.exists('forma_ingresso.csv'):
@@ -105,7 +124,6 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
             if n:
                 cotas_dict[n.lower()] = rec
 
-    # 3. Carregar Inscrições dos Alunos
     alunos_path = edital.arquivo_alunos.path if edital.arquivo_alunos else 'inscricoes_alunos.xlsx'
     if not os.path.exists(alunos_path) and os.path.exists('inscricoes_alunos.xlsx'):
         alunos_path = 'inscricoes_alunos.xlsx'
@@ -175,12 +193,10 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         elif timezone.is_naive(ts):
             ts = timezone.make_aware(ts)
 
-        # Determinar status no Semáforo de Auditoria
         crg_calculado = clean_crg(raw_crg)
         status_semaforo = 'VERDE'
         motivo = 'CRG consistente e validado automaticamente.'
 
-        # Critérios para o Semáforo
         if any(t in raw_crg.lower() for t in ['não tenho', 'nao tenho', 'não possuo', 'cursando 1º', 'sem crg']):
             status_semaforo = 'VERMELHO'
             motivo = 'Aluno em 1º semestre / sem nota no SIGAA (CRG preliminar 0.0).'
@@ -200,12 +216,10 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         else:
             verdes += 1
 
-        # Dados de Ingresso
         cotas_info = cotas_dict.get(mat) or cotas_dict.get(nome.lower(), {})
         is_cotista = cotas_info.get('is_cotista', False)
         forma_ingresso = cotas_info.get('forma', 'Ampla Concorrência')
 
-        # Ano e Ciclo
         ano_ingresso = edital.ano
         if mat and len(mat) >= 4 and mat[:4].isdigit():
             y = int(mat[:4])
@@ -274,12 +288,13 @@ def confirmar_todas_pendencias(edital: Edital) -> int:
     edital.save()
     return count
 
+
+# =============================================================================
+# 2. MOTOR DE CLASSIFICAÇÃO OFICIAL
+# =============================================================================
+
 def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
-    """
-    Executa o motor de classificação oficial sobre os candidatos homologados.
-    Preenche as vagas em duas rodadas (1ª e 2ª opção) respeitando cotas, gênero e ciclos.
-    """
-    # 1. Carregar Oportunidades do Edital
+    """Executa a classificação oficial dos candidatos em 2 rodadas com cotas e 50% mulheres."""
     opp_dict = {}
     for op in edital.oportunidades.all():
         ciclos_list = [c.strip() for c in op.ciclos_permitidos.split(',') if c.strip()]
@@ -295,7 +310,6 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
             percentual_mulheres=edital.percentual_mulheres,
         )
 
-    # 2. Carregar Candidatos do Edital
     students_list = []
     candidatos_db_map = {}
     for c in edital.candidatos.all():
@@ -320,7 +334,6 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
         )
         students_list.append(s)
 
-    # 3. Rodar a Classificação Oficial em 2 Rodadas
     edital.resultados.all().delete()
     edital.logs.all().delete()
 
@@ -351,7 +364,7 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
         for s in selecionados:
             s.alocado_opcao = 1
 
-    # --- RODADA 2: 2ª OPÇÃO (VAGAS REMANESCENTES) ---
+    # --- RODADA 2: 2ª OPÇÃO (REMANEJAMENTO) ---
     audit_logs.append("\n>>> RODADA 2: ALOCAÇÃO EM 2ª OPÇÃO (REMANEJAMENTO) <<<")
     for opp_id, opp in opp_dict.items():
         vagas_restantes = opp.vagas_total - len(opp.selecionados)
@@ -374,7 +387,6 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
             opp.lista_espera.extend(nova_esp)
             audit_logs.extend(logs)
 
-    # 4. Salvar Resultados no Banco de Dados
     alocados_count = 0
     for opp_id, opp in opp_dict.items():
         op_db = edital.oportunidades.get(codigo_opcao=opp_id)
@@ -395,11 +407,13 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
                 posicao=pos,
                 modalidade=s.modalidade or 'Ampla Concorrência',
                 opcao_atendida=f"{s.alocado_opcao}ª Opção",
-                etiqueta_motivo=etiqueta
+                etiqueta_motivo=etiqueta,
+                concluiu_estagio=False,
+                justificativa_frequencia="Estágio em andamento / Frequência pendente",
+                carga_horaria_horas=36,
             )
             alocados_count += 1
 
-    # Cadastro de Reserva (Alunos que não foram alocados em nenhuma vaga)
     reserva_candidatos = sort_candidates([s for s in students_list if not s.alocado])
     for pos, s in enumerate(reserva_candidatos, 1):
         c_db = candidatos_db_map[s.matricula]
@@ -415,7 +429,6 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
             etiqueta_motivo=etiqueta
         )
 
-    # Salvar Trilha de Auditoria
     for log_msg in audit_logs:
         LogDecisao.objects.create(edital=edital, registro=log_msg)
 
@@ -430,9 +443,670 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
         'cotistas': sum(1 for s in students_list if s.alocado and s.is_cotista),
     }
 
+
+# =============================================================================
+# 3. GESTÃO DE FREQUÊNCIA (REGRA DOS 75%)
+# =============================================================================
+
+def gerar_planilha_frequencia_preenchida(edital: Edital, output_path: str) -> str:
+    """Gera a planilha Excel oficial já pré-preenchida para acompanhamento de frequência dos professores."""
+    aprovados = Resultado.objects.filter(edital=edital, status='APROVADO').select_related('candidato', 'oportunidade').order_by('oportunidade__id', 'posicao')
+
+    rows = []
+    for r in aprovados:
+        op = r.oportunidade
+        c = r.candidato
+        rows.append({
+            'Professor Responsável': op.professor if op else '',
+            'Local do Estágio': op.local if op else '',
+            'Matrícula': c.matricula,
+            'Nome Completo do Aluno': c.nome,
+            'E-mail': c.email,
+            'Carga Horária (horas)': r.carga_horaria_horas,
+            '% Frequência': r.frequencia_percentual if r.frequencia_percentual is not None else '',
+            'Status Conclusão (Apto / Reprovado)': 'Apto' if r.concluiu_estagio else ('Reprovado' if r.frequencia_percentual is not None and r.frequencia_percentual < 75 else ''),
+            'Observações': r.justificativa_frequencia if r.justificativa_frequencia != "Estágio em andamento / Frequência pendente" else ''
+        })
+
+    with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
+        df = pd.DataFrame(rows)
+        df.to_excel(writer, sheet_name='Frequência_Estágios', index=False)
+
+    return output_path
+
+def importar_planilha_frequencia(edital: Edital, excel_path: str) -> Dict[str, Any]:
+    """
+    Lê a planilha de frequência preenchida e atualiza os resultados no banco pela matrícula.
+    Aplica a regra dos 75% ou o status explícito 'Apto' / 'Concluído'.
+    """
+    df = pd.read_excel(excel_path)
+    
+    col_mat = None
+    col_nome = None
+    col_freq = None
+    col_status = None
+    col_obs = None
+
+    for c in df.columns:
+        c_low = str(c).lower()
+        if 'matr' in c_low:
+            col_mat = c
+        elif 'nome' in c_low:
+            col_nome = c
+        elif 'freq' in c_low or '%' in c_low:
+            col_freq = c
+        elif 'status' in c_low or 'conclus' in c_low or 'apto' in c_low:
+            col_status = c
+        elif 'obs' in c_low:
+            col_obs = c
+
+    atualizados = 0
+    aptos_count = 0
+    reprovados_count = 0
+
+    aprovados_dict = {
+        r.candidato.matricula: r 
+        for r in Resultado.objects.filter(edital=edital, status='APROVADO').select_related('candidato')
+    }
+
+    for _, row in df.iterrows():
+        raw_mat = row[col_mat] if col_mat else ''
+        mat = clean_matricula(raw_mat)
+        
+        resultado = aprovados_dict.get(mat)
+        if not resultado:
+            continue
+
+        raw_freq = row[col_freq] if col_freq else None
+        raw_status = str(row[col_status]).strip().lower() if col_status else ''
+        obs = str(row[col_obs]).strip() if col_obs else ''
+
+        # Parsing da Frequência
+        freq_val = None
+        if pd.notna(raw_freq) and str(raw_freq).strip():
+            try:
+                freq_str = str(raw_freq).replace('%', '').replace(',', '.').strip()
+                freq_val = float(freq_str)
+                if freq_val > 100.0:
+                    freq_val = 100.0
+                elif freq_val < 0.0:
+                    freq_val = 0.0
+            except ValueError:
+                freq_val = None
+
+        # Avaliação da Regra dos 75% e Status Apto
+        concluiu = False
+        justificativa = ""
+
+        if freq_val is not None:
+            if freq_val >= 75.0:
+                concluiu = True
+                justificativa = f"Apto: Cumpriu {freq_val:.1f}% de frequência (mínimo exigido: 75%)."
+            else:
+                concluiu = False
+                justificativa = f"Frequência insuficiente: Atingiu {freq_val:.1f}% (mínimo exigido: 75%)."
+        elif any(t in raw_status for t in ['apto', 'sim', 'concluido', 'concluído', 'ok', '100']):
+            concluiu = True
+            justificativa = "Apto: Frequência e aproveitamento homologados pelo docente responsável."
+            freq_val = 100.0
+        elif any(t in raw_status for t in ['reprovado', 'não', 'nao', 'infrequente', 'falta', 'desistente']):
+            concluiu = False
+            justificativa = f"Reprovado: {obs if obs else 'Frequência insuficiente informada pelo supervisor.'}"
+            freq_val = 0.0
+        else:
+            concluiu = False
+            justificativa = "Pendente de confirmação da frequência."
+
+        resultado.frequencia_percentual = freq_val
+        resultado.concluiu_estagio = concluiu
+        resultado.justificativa_frequencia = justificativa
+        resultado.save()
+
+        atualizados += 1
+        if concluiu:
+            aptos_count += 1
+        else:
+            reprovados_count += 1
+
+    return {
+        'atualizados': atualizados,
+        'aptos': aptos_count,
+        'reprovados': reprovados_count,
+    }
+
+def salvar_frequencias_em_lote(edital: Edital, dados_frequencia: Dict[str, Any]) -> int:
+    """Atualiza as frequências e o status de aprovação a partir do formulário web."""
+    aprovados = Resultado.objects.filter(edital=edital, status='APROVADO')
+    total = 0
+    for r in aprovados:
+        r_id = str(r.id)
+        status_key = f"status_{r_id}"
+        freq_key = f"freq_{r_id}"
+        
+        status_val = str(dados_frequencia.get(status_key, '')).strip().upper()
+        freq_val_raw = dados_frequencia.get(freq_key)
+
+        freq_val = None
+        if freq_val_raw is not None and str(freq_val_raw).strip():
+            try:
+                freq_val = float(str(freq_val_raw).replace(',', '.').strip())
+                if freq_val > 100.0:
+                    freq_val = 100.0
+                elif freq_val < 0.0:
+                    freq_val = 0.0
+            except ValueError:
+                freq_val = None
+
+        if status_val == 'APTO' or (freq_val is not None and freq_val >= 75.0):
+            r.concluiu_estagio = True
+            r.frequencia_percentual = freq_val
+            r.justificativa_frequencia = f"Apto: Cumpriu estágio com sucesso ({f'{freq_val:.1f}%' if freq_val is not None else 'Presença validada'})."
+        elif status_val == 'REPROVADO' or (freq_val is not None and freq_val < 75.0):
+            r.concluiu_estagio = False
+            r.frequencia_percentual = freq_val
+            r.justificativa_frequencia = f"Reprovado: {f'Frequência insuficiente ({freq_val:.1f}% < 75%)' if freq_val is not None else 'Frequência insuficiente informada pelo supervisor'}."
+        else:
+            r.concluiu_estagio = False
+            r.frequencia_percentual = freq_val
+            r.justificativa_frequencia = "Estágio em andamento / Frequência pendente"
+        
+        r.save()
+        total += 1
+    return total
+
+def marcar_todos_aptos(edital: Edital) -> int:
+    """Atalho rápido para marcar 100% de frequência para todos os alunos aprovados."""
+    aprovados = Resultado.objects.filter(edital=edital, status='APROVADO')
+    for r in aprovados:
+        r.concluiu_estagio = True
+        r.frequencia_percentual = 100.0
+        r.justificativa_frequencia = "Aprovado com 100.0% de frequência."
+        r.save()
+    return aprovados.count()
+
+
+# =============================================================================
+# 4. GERAÇÃO DE CERTIFICADO INDIVIDUAL EM PDF (REPORTLAB - LANDSCAPE NOBRE)
+# =============================================================================
+
+def draw_certificate_borders(c: canvas.Canvas, doc):
+    """Desenha a moldura institucional nobre dupla no Certificado em formato paisagem."""
+    c.saveState()
+    width, height = landscape(A4)
+
+    # Moldura Externa (Azul Marinho UFPA)
+    c.setStrokeColor(colors.HexColor('#1A365D'))
+    c.setLineWidth(3.5)
+    c.rect(12 * mm, 12 * mm, width - 24 * mm, height - 24 * mm)
+
+    # Moldura Interna (Dourado Nobre)
+    c.setStrokeColor(colors.HexColor('#C5A059'))
+    c.setLineWidth(1.2)
+    c.rect(15 * mm, 15 * mm, width - 30 * mm, height - 30 * mm)
+
+    # Cantoneiras Decorativas Sutis
+    c.setFillColor(colors.HexColor('#C5A059'))
+    corner_size = 4 * mm
+    for x in [15 * mm, width - 15 * mm - corner_size]:
+        for y in [15 * mm, height - 15 * mm - corner_size]:
+            c.rect(x, y, corner_size, corner_size, fill=1, stroke=0)
+
+    c.restoreState()
+
+def gerar_certificado_individual_pdf(resultado: Resultado, output_path: str) -> str:
+    """
+    Gera o Certificado de Conclusão oficial individual em PDF (formato A4 paisagem).
+    Baseado no modelo institucional '4 - Modelo de CERTIFICADO.pdf' com Brasão, Logo e assinaturas.
+    """
+    candidato = resultado.candidato
+    oportunidade = resultado.oportunidade
+    edital = resultado.edital
+
+    # Hash de Autenticidade Único (SHA-256 de 12 dígitos)
+    seed = f"{candidato.matricula}_{oportunidade.id}_{edital.id}_{settings.SECRET_KEY}"
+    codigo_autenticidade = f"FAMED-{hashlib.sha256(seed.encode()).hexdigest()[:10].upper()}"
+
+    dir_output = os.path.dirname(os.path.abspath(output_path))
+    if dir_output:
+        os.makedirs(dir_output, exist_ok=True)
+
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=landscape(A4),
+        leftMargin=25 * mm,
+        rightMargin=25 * mm,
+        topMargin=20 * mm,
+        bottomMargin=20 * mm
+    )
+
+    styles = getSampleStyleSheet()
+
+    style_gov = ParagraphStyle(
+        'CertGov',
+        fontName='Helvetica-Bold',
+        fontSize=9,
+        leading=12,
+        alignment=1,
+        textColor=colors.HexColor('#1A202C')
+    )
+    style_famed = ParagraphStyle(
+        'CertFamed',
+        fontName='Helvetica-Bold',
+        fontSize=8.5,
+        leading=11.5,
+        alignment=1,
+        textColor=colors.HexColor('#2D3748')
+    )
+    style_title = ParagraphStyle(
+        'CertTitle',
+        fontName='Helvetica-Bold',
+        fontSize=18,
+        leading=22,
+        alignment=1,
+        textColor=colors.HexColor('#1A365D')
+    )
+    style_body = ParagraphStyle(
+        'CertBody',
+        fontName='Times-Roman',
+        fontSize=13,
+        leading=22,
+        alignment=4,  # Justificado
+        textColor=colors.HexColor('#1A202C')
+    )
+    style_sig = ParagraphStyle(
+        'CertSig',
+        fontName='Helvetica',
+        fontSize=9,
+        leading=12,
+        alignment=1,
+        textColor=colors.HexColor('#2D3748')
+    )
+    style_auth = ParagraphStyle(
+        'CertAuth',
+        fontName='Helvetica',
+        fontSize=7.5,
+        leading=10,
+        alignment=1,
+        textColor=colors.HexColor('#718096')
+    )
+
+    story = []
+
+    # Cabeçalho com Logos
+    brasao_path = "ufpa_brasao.png"
+    logo_path = "Logo Estagio de Ferias FAMED.png"
+    if not os.path.exists(brasao_path):
+        brasao_path = os.path.join(settings.BASE_DIR, "estagios/static/img/ufpa_brasao.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(settings.BASE_DIR, "estagios/static/img/logo_famed.png")
+
+    img_brasao = Image(brasao_path, width=1.4 * cm, height=1.8 * cm) if os.path.exists(brasao_path) else Paragraph("", style_gov)
+    img_logo = Image(logo_path, width=1.8 * cm, height=1.8 * cm) if os.path.exists(logo_path) else Paragraph("", style_gov)
+
+    header_table = Table([
+        [
+            img_brasao,
+            [
+                Paragraph("REPÚBLICA FEDERATIVA DO BRASIL", style_gov),
+                Paragraph("MINISTÉRIO DA EDUCAÇÃO • UNIVERSIDADE FEDERAL DO PARÁ", style_gov),
+                Paragraph("INSTITUTO DE CIÊNCIAS DA SAÚDE • FACULDADE DE MEDICINA", style_famed),
+            ],
+            img_logo
+        ]
+    ], colWidths=[2.5 * cm, 19.5 * cm, 2.5 * cm])
+    header_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 8 * mm))
+
+    # Título do Certificado
+    story.append(Paragraph("CERTIFICADO DE ESTÁGIO VOLUNTÁRIO", style_title))
+    story.append(Spacer(1, 7 * mm))
+
+    # Texto Oficial (Baseado em '4 - Modelo de CERTIFICADO.pdf')
+    texto_certificado = (
+        f"Certificamos que o(a) discente <b>{candidato.nome.upper()}</b>, matrícula nº <b>{candidato.matricula}</b>, "
+        f"realizou com assiduidade e aproveitamento o estágio voluntário do programa <b>ESTÁGIO DE FÉRIAS DA FAMED-UFPA</b>, "
+        f"serviço do <b>{oportunidade.local}</b>, sob orientação da(o) docente <b>{oportunidade.professor}</b>, "
+        f"no período de <b>{oportunidade.periodo}</b>, cumprindo com êxito a carga horária total de <b>{resultado.carga_horaria_horas} horas</b>."
+    )
+    story.append(Paragraph(texto_certificado, style_body))
+    story.append(Spacer(1, 12 * mm))
+
+    # Local e Data de Emissão por extenso
+    hoje = datetime.date.today()
+    meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+             'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+    data_extenso = f"Belém-PA, {hoje.day:02d} de {meses[hoje.month - 1]} de {hoje.year}."
+
+    # Assinaturas lado a lado
+    sig_table = Table([
+        [
+            [
+                Paragraph("____________________________________________________", style_sig),
+                Paragraph(f"<b>Prof(a). {oportunidade.professor}</b>", style_sig),
+                Paragraph("Docente Supervisor(a) do Estágio", style_sig),
+                Paragraph("FAMED / UFPA", style_sig),
+            ],
+            [
+                Paragraph("____________________________________________________", style_sig),
+                Paragraph("<b>Prof. Dr. Cezar Augusto Muniz Caldas</b>", style_sig),
+                Paragraph("Direção da Faculdade de Medicina", style_sig),
+                Paragraph("FAMED / ICM - UFPA", style_sig),
+            ]
+        ]
+    ], colWidths=[12.2 * cm, 12.2 * cm])
+    sig_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(sig_table)
+    story.append(Spacer(1, 6 * mm))
+
+    # Rodapé Antifraude com Hash e Autenticidade
+    auth_text = (
+        f"{data_extenso} • Registro institucional nº {edital.numero_oficio} • "
+        f"<b>Código de Autenticidade: {codigo_autenticidade}</b><br/>"
+        f"A autenticidade deste certificado pode ser verificada junto à Secretaria da FAMED/UFPA."
+    )
+    story.append(Paragraph(auth_text, style_auth))
+
+    # Build com as molduras desenhadas no canvas
+    doc.build(story, onFirstPage=draw_certificate_borders)
+
+    resultado.certificado_codigo = codigo_autenticidade
+    resultado.certificado_gerado_em = timezone.now()
+    resultado.save()
+
+    return output_path
+
+def gerar_zip_certificados(edital: Edital, zip_output_path: str) -> str:
+    """Gera um arquivo ZIP com todos os certificados em PDF dos concluintes do edital."""
+    concluintes = Resultado.objects.filter(edital=edital, status='APROVADO', concluiu_estagio=True).select_related('candidato', 'oportunidade')
+
+    pasta_temp = os.path.join(settings.MEDIA_ROOT, f"temp_certificados_{edital.id}")
+    os.makedirs(pasta_temp, exist_ok=True)
+
+    with zipfile.ZipFile(zip_output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for r in concluintes:
+            safe_name = re.sub(r'\W+', '_', r.candidato.nome)
+            pdf_filename = f"Certificado_{r.candidato.matricula}_{safe_name}.pdf"
+            pdf_path = os.path.join(pasta_temp, pdf_filename)
+            gerar_certificado_individual_pdf(r, pdf_path)
+            zipf.write(pdf_path, arcname=pdf_filename)
+
+    return zip_output_path
+
+
+def gerar_folha_frequencia_individual_pdf(resultado: Resultado, output_path: str) -> str:
+    """
+    Gera a Folha de Frequência Diária oficial (baseada em '3 - Modelo de FREQUÊNCIA.pdf')
+    já pré-preenchida com Local, Supervisor, Nome do Aluno e Matrícula.
+    """
+    dir_output = os.path.dirname(os.path.abspath(output_path))
+    if dir_output:
+        os.makedirs(dir_output, exist_ok=True)
+
+    doc = SimpleDocTemplate(
+        output_path,
+        pagesize=A4,
+        leftMargin=15 * mm,
+        rightMargin=15 * mm,
+        topMargin=15 * mm,
+        bottomMargin=15 * mm
+    )
+
+    styles = getSampleStyleSheet()
+    style_head = ParagraphStyle('FreqHead', fontName='Helvetica-Bold', fontSize=9.5, leading=13, alignment=1)
+    style_title = ParagraphStyle('FreqTitle', fontName='Helvetica-Bold', fontSize=12, leading=16, alignment=1, textColor=colors.HexColor('#1A365D'))
+    style_field = ParagraphStyle('FreqField', fontName='Helvetica', fontSize=8.5, leading=12)
+    style_tbl_head = ParagraphStyle('FreqTblHead', fontName='Helvetica-Bold', fontSize=8, leading=10, alignment=1)
+    style_tbl_cell = ParagraphStyle('FreqTblCell', fontName='Helvetica', fontSize=7.5, leading=9.5, alignment=1)
+
+    story = []
+
+    # Logos e Cabeçalho Oficial
+    brasao_path = "ufpa_brasao.png"
+    logo_path = "Logo Estagio de Ferias FAMED.png"
+    if not os.path.exists(brasao_path):
+        brasao_path = os.path.join(settings.BASE_DIR, "estagios/static/img/ufpa_brasao.png")
+    if not os.path.exists(logo_path):
+        logo_path = os.path.join(settings.BASE_DIR, "estagios/static/img/logo_famed.png")
+
+    img_b = Image(brasao_path, width=1.3 * cm, height=1.6 * cm) if os.path.exists(brasao_path) else Paragraph("", style_head)
+    img_l = Image(logo_path, width=1.6 * cm, height=1.6 * cm) if os.path.exists(logo_path) else Paragraph("", style_head)
+
+    header_table = Table([
+        [
+            img_b,
+            [
+                Paragraph("SERVIÇO PÚBLICO FEDERAL", style_head),
+                Paragraph("UNIVERSIDADE FEDERAL DO PARÁ", style_head),
+                Paragraph("INSTITUTO DE CIÊNCIAS DA SAÚDE • FACULDADE DE MEDICINA", style_head),
+            ],
+            img_l
+        ]
+    ], colWidths=[2.2 * cm, 13.6 * cm, 2.2 * cm])
+    header_table.setStyle(TableStyle([
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    story.append(header_table)
+    story.append(Spacer(1, 4 * mm))
+
+    # Título do Formulário
+    story.append(Paragraph("LISTA DE FREQUÊNCIA DE ESTÁGIO DE FÉRIAS", style_title))
+    story.append(Spacer(1, 3 * mm))
+
+    # Dados Pré-Preenchidos do Aluno e Local
+    c = resultado.candidato
+    op = resultado.oportunidade
+    info_data = [
+        [Paragraph(f"<b>LOCAL:</b> {op.local if op else 'N/A'} (Docente: {op.professor if op else 'N/A'})", style_field)],
+        [Paragraph(f"<b>DISCENTE:</b> {c.nome} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>MATRÍCULA:</b> {c.matricula} &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; <b>CARGA HORÁRIA:</b> {resultado.carga_horaria_horas}h", style_field)],
+    ]
+    tbl_info = Table(info_data, colWidths=[18 * cm])
+    tbl_info.setStyle(TableStyle([
+        ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#CBD5E1')),
+        ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#F8FAFC')),
+        ('TOPPADDING', (0, 0), (-1, -1), 3),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 3),
+    ]))
+    story.append(tbl_info)
+    story.append(Spacer(1, 4 * mm))
+
+    # Tabela Diária para Assinatura (20 Dias de Estágio)
+    rows = [[
+        Paragraph("DIA", style_tbl_head),
+        Paragraph("DATA", style_tbl_head),
+        Paragraph("HORÁRIO", style_tbl_head),
+        Paragraph("ASSINATURA / SUPERVISOR", style_tbl_head)
+    ]]
+    for i in range(1, 21):
+        rows.append([
+            Paragraph(f"{i:02d}", style_tbl_cell),
+            Paragraph("", style_tbl_cell),
+            Paragraph("", style_tbl_cell),
+            Paragraph("", style_tbl_cell),
+        ])
+
+    tbl_days = Table(rows, colWidths=[1.8 * cm, 3.2 * cm, 4.0 * cm, 9.0 * cm], rowHeights=[6.0 * mm] + [7.2 * mm] * 20)
+    tbl_days.setStyle(TableStyle([
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#94A3B8')),
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#E2E8F0')),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+    ]))
+    story.append(tbl_days)
+    story.append(Spacer(1, 6 * mm))
+
+    # Assinaturas Finais de Homologação
+    sig_table = Table([
+        [
+            Paragraph(f"____________________________________________________<br/><b>Prof(a). {op.professor if op else ''}</b><br/>Docente Supervisor(a) do Estágio - FAMED/UFPA", style_tbl_cell),
+            Paragraph("____________________________________________________<br/><b>Assinatura do(a) Discente</b><br/>Estagiário(a) Concluinte", style_tbl_cell),
+        ]
+    ], colWidths=[9 * cm, 9 * cm])
+    story.append(sig_table)
+
+    doc.build(story)
+    return output_path
+
+
+def gerar_zip_folhas_frequencia(edital: Edital, zip_output_path: str) -> str:
+    """Gera um arquivo ZIP com as Folhas de Presença diárias em PDF de todos os alunos aprovados."""
+    aprovados = Resultado.objects.filter(edital=edital, status='APROVADO').select_related('candidato', 'oportunidade')
+
+    pasta_temp = os.path.join(settings.MEDIA_ROOT, f"temp_folhas_freq_{edital.id}")
+    os.makedirs(pasta_temp, exist_ok=True)
+
+    with zipfile.ZipFile(zip_output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for r in aprovados:
+            safe_name = re.sub(r'\W+', '_', r.candidato.nome)
+            pdf_filename = f"Folha_Frequencia_{r.candidato.matricula}_{safe_name}.pdf"
+            pdf_path = os.path.join(pasta_temp, pdf_filename)
+            gerar_folha_frequencia_individual_pdf(r, pdf_path)
+            zipf.write(pdf_path, arcname=pdf_filename)
+
+    return zip_output_path
+
+
+# =============================================================================
+# 5. DISPARO DE CERTIFICADOS POR E-MAIL (COM SIMULAÇÃO SEGURA)
+# =============================================================================
+
+def disparar_certificados_email(edital: Edital, email_teste_destino: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Envia os certificados individuais por e-mail para todos os alunos concluintes (Aptos).
+    Em ambiente de desenvolvimento/teste, grava na pasta 'media/emails_simulados/' sem disparar na internet.
+    """
+    concluintes = Resultado.objects.filter(edital=edital, status='APROVADO', concluiu_estagio=True).select_related('candidato', 'oportunidade')
+
+    pasta_cert = os.path.join(settings.MEDIA_ROOT, f"certificados_edital_{edital.id}")
+    os.makedirs(pasta_cert, exist_ok=True)
+
+    # Pasta de simulação para desenvolvimento
+    os.makedirs(settings.EMAIL_FILE_PATH, exist_ok=True)
+
+    total_aptos = concluintes.count()
+    enviados_sucesso = 0
+    erros = []
+    logs_disparo = []
+
+    remetente = settings.DEFAULT_FROM_EMAIL
+
+    for r in concluintes:
+        c = r.candidato
+        op = r.oportunidade
+
+        # Define destinatário real ou de teste
+        destinatario = email_teste_destino if email_teste_destino else c.email
+
+        # Gera o Certificado se ainda não existir
+        safe_name = re.sub(r'\W+', '_', c.nome)
+        pdf_filename = f"Certificado_{c.matricula}_{safe_name}.pdf"
+        pdf_path = os.path.join(pasta_cert, pdf_filename)
+        if not os.path.exists(pdf_path):
+            gerar_certificado_individual_pdf(r, pdf_path)
+
+        assunto = f"[FAMED/UFPA] Certificado de Conclusão do Estágio de Férias - {c.nome}"
+
+        corpo_texto = (
+            f"Prezado(a) discente {c.nome},\n\n"
+            f"Parabéns pela conclusão com êxito do estágio de férias da Faculdade de Medicina da UFPA!\n\n"
+            f"Serviço: {op.local}\n"
+            f"Docente Supervisor(a): {op.professor}\n"
+            f"Carga Horária: {r.carga_horaria_horas} horas\n"
+            f"Código de Autenticidade: {r.certificado_codigo}\n\n"
+            f"Segue em anexo o seu Certificado de Conclusão oficial em formato PDF.\n\n"
+            f"Atenciosamente,\n"
+            f"Direção da Faculdade de Medicina - FAMED / ICM\n"
+            f"Universidade Federal do Pará (UFPA)"
+        )
+
+        corpo_html = f"""
+        <div style="font-family: Arial, sans-serif; color: #2D3748; line-height: 1.6; max-width: 600px; margin: auto; border: 1px solid #E2E8F0; border-radius: 12px; padding: 24px;">
+            <div style="text-align: center; border-bottom: 2px solid #1A365D; padding-bottom: 12px; margin-bottom: 16px;">
+                <h2 style="color: #1A365D; margin: 0; font-size: 18px;">UNIVERSIDADE FEDERAL DO PARÁ</h2>
+                <h3 style="color: #4A5568; margin: 4px 0 0 0; font-size: 14px;">FACULDADE DE MEDICINA - FAMED/UFPA</h3>
+                <p style="color: #718096; margin: 2px 0 0 0; font-size: 12px;">Programa de Estágio de Férias e Extracurricular</p>
+            </div>
+            
+            <p>Prezado(a) discente <b>{c.nome}</b>,</p>
+            <p>É com grande satisfação que parabenizamos você pela conclusão do estágio de férias com aproveitamento e assiduidade satisfatória!</p>
+            
+            <div style="background-color: #F7FAFC; border-left: 4px solid #1A365D; padding: 12px 16px; margin: 16px 0; border-radius: 4px;">
+                <p style="margin: 4px 0;"><b>Local do Estágio:</b> {op.local}</p>
+                <p style="margin: 4px 0;"><b>Docente Supervisor(a):</b> {op.professor}</p>
+                <p style="margin: 4px 0;"><b>Carga Horária:</b> {r.carga_horaria_horas} horas</p>
+                <p style="margin: 4px 0;"><b>Código de Autenticidade:</b> <code style="background-color: #EDF2F7; padding: 2px 6px; border-radius: 4px; color: #1A365D;">{r.certificado_codigo}</code></p>
+            </div>
+
+            <p>O seu <b>Certificado de Conclusão oficial em PDF</b> encontra-se anexado a este e-mail.</p>
+            <p style="font-size: 12px; color: #718096;">Guarde este documento com segurança para comprovação curricular e processos seletivos de residência médica.</p>
+
+            <hr style="border: 0; border-top: 1px solid #E2E8F0; margin: 20px 0;">
+            <p style="font-size: 12px; color: #718096; text-align: center;">
+                Direção da Faculdade de Medicina - FAMED / ICM • Universidade Federal do Pará
+            </p>
+        </div>
+        """
+
+        try:
+            msg = EmailMultiAlternatives(
+                subject=assunto,
+                body=corpo_texto,
+                from_email=remetente,
+                to=[destinatario]
+            )
+            msg.attach_alternative(corpo_html, "text/html")
+            
+            # Anexa o Certificado em PDF
+            if os.path.exists(pdf_path):
+                with open(pdf_path, 'rb') as f_pdf:
+                    msg.attach(pdf_filename, f_pdf.read(), 'application/pdf')
+
+            msg.send(fail_silently=False)
+
+            r.email_enviado = True
+            r.email_enviado_em = timezone.now()
+            r.email_log = f"Certificado enviado para {destinatario} em {r.email_enviado_em.strftime('%d/%m/%Y %H:%M')}"
+            r.save()
+
+            enviados_sucesso += 1
+            logs_disparo.append({
+                'aluno': c.nome,
+                'email': destinatario,
+                'status': 'Enviado com Sucesso',
+                'codigo': r.certificado_codigo,
+                'anexo': pdf_filename,
+            })
+        except Exception as e:
+            erros.append({'aluno': c.nome, 'erro': str(e)})
+
+    return {
+        'total_aptos': total_aptos,
+        'enviados_sucesso': enviados_sucesso,
+        'erros': erros,
+        'logs': logs_disparo,
+        'modo_simulacao': 'filebased' in settings.EMAIL_BACKEND,
+    }
+
+
+# =============================================================================
+# 6. EXPORTAÇÃO OFICIAL DO EDITAL (PDF E EXCEL)
+# =============================================================================
+
 def gerar_pdf_oficial_edital(edital: Edital, output_path: str) -> str:
     """Gera o documento PDF Oficial (Ofício GEP/HUJBB) a partir dos resultados homologados."""
-    # Prepara dicionário de oportunidades com alunos selecionados
     opp_dict = {}
     for op in edital.oportunidades.all():
         ciclos_list = [c.strip() for c in op.ciclos_permitidos.split(',') if c.strip()]
@@ -445,7 +1119,6 @@ def gerar_pdf_oficial_edital(edital: Edital, output_path: str) -> str:
             vagas_total=op.vagas_totais,
             ciclos_permitidos=ciclos_list,
         )
-        # Buscar aprovados desta oportunidade
         aprovados = Resultado.objects.filter(edital=edital, oportunidade=op, status='APROVADO').order_by('posicao')
         for res in aprovados:
             c = res.candidato
@@ -480,12 +1153,7 @@ def gerar_pdf_oficial_edital(edital: Edital, output_path: str) -> str:
     return output_path
 
 def gerar_excel_resultado_edital(edital: Edital, output_path: str) -> str:
-    """
-    Gera a planilha Excel oficial solicitada no Bloco 5 com as 3 abas essenciais:
-    - Aba 1 (Aprovados): Nome, Matrícula, Professor/Estágio, Ciclo, Modalidade de Entrada e Opção.
-    - Aba 2 (Cadastro de Reserva): Lista ordenada dos alunos que não passaram.
-    - Aba 3 (Log de Auditoria): Justificativas transparentes das decisões.
-    """
+    """Gera a planilha Excel oficial contendo as 3 abas essenciais solicitadas."""
     with pd.ExcelWriter(output_path, engine='openpyxl') as writer:
         # Aba 1: Aprovados
         rows_aprovados = []

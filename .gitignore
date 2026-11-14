@@ -11,6 +11,10 @@
 # Documentos e Ofícios em PDF (dados pessoais de alunos e professores)
 *.pdf
 
+# Arquivos compactados de exportação (certificados e listas)
+*.zip
+*.tar.gz
+
 # Nomes específicos dos arquivos recebidos e gerados
 "Estágio de Férias FAMED 2026.3 - Triagem de Oportunidades (respostas).xlsx"
 "Estágio de Férias FAMED JULHO 2026 - Candidatura 15.05.26 - 20.05.26 (respostas).xlsx"

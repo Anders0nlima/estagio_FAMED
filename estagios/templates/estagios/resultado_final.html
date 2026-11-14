@@ -14,7 +14,7 @@
             <p class="text-sm text-slate-500">Edital: <span class="font-medium text-slate-800">{{ edital.titulo }}</span> ({{ edital.semestre }})</p>
         </div>
 
-        <!-- Botões de Exportação -->
+        <!-- Botões de Exportação e Módulo Pós-Estágio -->
         <div class="flex items-center space-x-3">
             <a href="{% url 'exportar_excel' edital.id %}" class="bg-white hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2.5 rounded-xl border border-slate-300 shadow-sm transition flex items-center space-x-2 text-xs">
                 <span>📊</span>
@@ -23,6 +23,10 @@
             <a href="{% url 'exportar_pdf' edital.id %}" class="bg-blue-700 hover:bg-blue-800 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-xs">
                 <span>📄</span>
                 <span>Exportar Ofício Oficial (PDF)</span>
+            </a>
+            <a href="{% url 'frequencia_certificados' edital.id %}" class="bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-xs">
+                <span>🎓</span>
+                <span>Frequência & Certificados →</span>
             </a>
         </div>
     </div>

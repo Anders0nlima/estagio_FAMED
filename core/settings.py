@@ -105,3 +105,13 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 LOGOUT_REDIRECT_URL = '/login/'
+
+# --- Configurações de E-mail (Seguro por Padrão com Simulação Local) ---
+EMAIL_BACKEND = os.environ.get('EMAIL_BACKEND', 'django.core.mail.backends.filebased.EmailBackend')
+EMAIL_FILE_PATH = BASE_DIR / 'media' / 'emails_simulados'
+EMAIL_HOST = os.environ.get('EMAIL_HOST', 'smtp.ufpa.br')
+EMAIL_PORT = int(os.environ.get('EMAIL_PORT', 587))
+EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', 'True') == 'True'
+EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', 'famed@ufpa.br')
+EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
+DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'Faculdade de Medicina - FAMED/UFPA <famed@ufpa.br>')
