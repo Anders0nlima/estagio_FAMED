@@ -83,6 +83,41 @@ def novo_edital_view(request):
     return render(request, 'estagios/novo_edital.html')
 
 @login_required
+def editar_edital_view(request, edital_id):
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        edital.titulo = request.POST.get('titulo', edital.titulo)
+        edital.semestre = request.POST.get('semestre', edital.semestre)
+        try:
+            edital.ano = int(request.POST.get('ano', edital.ano))
+        except (ValueError, TypeError):
+            pass
+        edital.numero_oficio = request.POST.get('numero_oficio', edital.numero_oficio)
+        edital.protocolo = request.POST.get('protocolo', edital.protocolo)
+        try:
+            edital.percentual_cotas = float(request.POST.get('percentual_cotas', edital.percentual_cotas))
+        except (ValueError, TypeError):
+            pass
+        try:
+            edital.percentual_mulheres = float(request.POST.get('percentual_mulheres', edital.percentual_mulheres))
+        except (ValueError, TypeError):
+            pass
+        edital.save()
+        messages.success(request, f"Edital '{edital.titulo}' atualizado com sucesso!")
+        return redirect('dashboard')
+
+    return render(request, 'estagios/novo_edital.html', {'edital': edital, 'modo_edicao': True})
+
+@login_required
+def excluir_edital_view(request, edital_id):
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        titulo = edital.titulo
+        edital.delete()
+        messages.success(request, f"Processo seletivo '{titulo}' excluído com sucesso!")
+    return redirect('dashboard')
+
+@login_required
 def upload_planilhas_view(request, edital_id):
     edital = get_object_or_404(Edital, id=edital_id)
 
@@ -120,10 +155,12 @@ def upload_planilhas_view(request, edital_id):
 def auditoria_semaforo_view(request, edital_id):
     edital = get_object_or_404(Edital, id=edital_id)
     
-    # Filtro de aba no semáforo
+    # Filtro de aba no semáforo e busca
     aba = request.GET.get('aba', 'todos')
+    q = request.GET.get('q', '').strip()
     candidatos_qs = edital.candidatos.all()
 
+    total_count = candidatos_qs.count()
     verdes_count = candidatos_qs.filter(status_auditoria='VERDE').count()
     amarelos_count = candidatos_qs.filter(status_auditoria='AMARELO').count()
     vermelhos_count = candidatos_qs.filter(status_auditoria='VERMELHO').count()
@@ -140,10 +177,21 @@ def auditoria_semaforo_view(request, edital_id):
     else:
         candidatos = candidatos_qs
 
+    if q:
+        from django.db.models import Q
+        candidatos = candidatos.filter(
+            Q(nome__icontains=q) |
+            Q(matricula__icontains=q) |
+            Q(crg_digitado__icontains=q) |
+            Q(email__icontains=q)
+        )
+
     return render(request, 'estagios/auditoria_semaforo.html', {
         'edital': edital,
         'candidatos': candidatos,
         'aba': aba,
+        'q': q,
+        'total_count': total_count,
         'verdes_count': verdes_count,
         'amarelos_count': amarelos_count,
         'vermelhos_count': vermelhos_count,
@@ -154,12 +202,20 @@ def auditoria_semaforo_view(request, edital_id):
 def confirmar_candidato_view(request, candidato_id):
     candidato = get_object_or_404(Candidato, id=candidato_id)
     if request.method == 'POST':
-        novo_crg = request.POST.get('crg_oficial', candidato.crg_oficial)
-        try:
-            confirmar_auditoria_candidato(candidato, float(novo_crg))
-            messages.success(request, f"Nota de {candidato.nome} homologada com sucesso: {candidato.crg_oficial:.4f}")
-        except ValueError:
-            messages.error(request, "Valor de CRG inválido informado.")
+        novo_crg = request.POST.get('crg_oficial', '').strip()
+        if novo_crg:
+            try:
+                val = float(novo_crg.replace(',', '.'))
+                confirmar_auditoria_candidato(candidato, val)
+                messages.success(request, f"Nota de {candidato.nome} homologada com sucesso: {candidato.crg_oficial:.4f}")
+            except ValueError:
+                messages.error(request, f"Valor de CRG inválido informado: '{novo_crg}'.")
+        else:
+            messages.error(request, "Por favor, informe um valor de CRG para homologação.")
+            
+    referer = request.META.get('HTTP_REFERER')
+    if referer and 'auditoria' in referer:
+        return redirect(referer)
     return redirect('auditoria_semaforo', edital_id=candidato.edital.id)
 
 @login_required
@@ -255,9 +311,9 @@ def frequencia_certificados_view(request, edital_id):
     aprovados_qs = Resultado.objects.filter(edital=edital, status='APROVADO').select_related('candidato', 'oportunidade').order_by('oportunidade__id', 'posicao')
 
     total_aprovados = aprovados_qs.count()
-    aptos_count = aprovados_qs.filter(concluiu_estagio=True).count()
-    reprovados_count = aprovados_qs.filter(concluiu_estagio=False, frequencia_percentual__isnull=False).count()
-    pendentes_count = total_aprovados - (aptos_count + reprovados_count)
+    aptos_count = sum(1 for r in aprovados_qs if r.status_conclusao == 'APTO')
+    reprovados_count = sum(1 for r in aprovados_qs if r.status_conclusao == 'REPROVADO')
+    pendentes_count = sum(1 for r in aprovados_qs if r.status_conclusao == 'PENDENTE')
     emails_enviados_count = aprovados_qs.filter(email_enviado=True).count()
 
     # Agrupa por oportunidade/professor

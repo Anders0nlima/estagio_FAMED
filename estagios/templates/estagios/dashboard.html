@@ -12,7 +12,7 @@
             <p class="text-sm text-slate-500">Gestão dos processos seletivos e homologação de vagas da FAMED/UFPA</p>
         </div>
         <div>
-            <a href="{% url 'novo_edital' %}" class="inline-flex items-center space-x-2 bg-blue-700 hover:bg-blue-800 text-white font-medium px-4 py-2.5 rounded-xl shadow-md hover:shadow-lg transition">
+            <a href="{% url 'novo_edital' %}" class="inline-flex items-center space-x-2 bg-[#086419] hover:bg-[#00420c] text-white font-medium px-4 py-2.5 rounded-xl shadow-md hover:shadow-lg transition">
                 <span class="text-lg font-bold leading-none">+</span>
                 <span>Novo Edital</span>
             </a>
@@ -22,7 +22,7 @@
     <!-- Cards de Métricas -->
     <div class="grid grid-cols-1 sm:grid-cols-3 gap-5">
         <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex items-center space-x-4">
-            <div class="h-12 w-12 rounded-xl bg-blue-50 text-blue-700 flex items-center justify-center font-bold text-xl border border-blue-100">
+            <div class="h-12 w-12 rounded-xl bg-emerald-50 text-[#086419] flex items-center justify-center font-bold text-xl border border-emerald-100">
                 📋
             </div>
             <div>
@@ -43,24 +43,24 @@
 
         <div class="bg-white rounded-2xl p-5 border border-slate-200 shadow-sm flex items-center space-x-4">
             <div class="h-12 w-12 rounded-xl bg-purple-50 text-purple-700 flex items-center justify-center font-bold text-xl border border-purple-100">
-                🎓
+                👥
             </div>
             <div>
-                <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold block">Inscrições Totais</span>
+                <span class="text-xs uppercase tracking-wider text-slate-400 font-semibold block">Inscrições Recebidas</span>
                 <span class="text-2xl font-bold text-slate-800">{{ total_candidatos }}</span>
             </div>
         </div>
     </div>
 
     <!-- Lista de Editais -->
-    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-        <div class="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between">
+    <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-visible">
+        <div class="px-6 py-4 border-b border-slate-100 bg-slate-50 flex items-center justify-between rounded-t-2xl">
             <h2 class="text-base font-semibold text-slate-800">Processos Seletivos Registrados</h2>
             <span class="text-xs font-medium text-slate-500">{{ editais.count }} processo(s)</span>
         </div>
 
         {% if editais %}
-        <div class="overflow-x-auto">
+        <div class="overflow-visible">
             <table class="w-full text-left text-sm text-slate-600">
                 <thead class="bg-slate-50 text-xs font-semibold uppercase text-slate-500 border-b border-slate-200">
                     <tr>
@@ -74,14 +74,19 @@
                 <tbody class="divide-y divide-slate-100">
                     {% for edital in editais %}
                     <tr class="hover:bg-slate-50/80 transition">
+                        <!-- Título e Semestre -->
                         <td class="px-6 py-4">
                             <span class="font-bold text-slate-900 block text-base">{{ edital.titulo }}</span>
-                            <span class="text-xs text-blue-600 font-medium">Período: {{ edital.semestre }}</span>
+                            <span class="text-xs text-[#086419] font-medium">Período: {{ edital.semestre }}</span>
                         </td>
+
+                        <!-- Ofício e Protocolo -->
                         <td class="px-6 py-4 text-xs space-y-0.5">
                             <span class="block text-slate-700 font-medium">Ofício: {{ edital.numero_oficio }}</span>
                             <span class="block text-slate-400">SIPAC: {{ edital.protocolo }}</span>
                         </td>
+
+                        <!-- Vagas e Candidatos -->
                         <td class="px-6 py-4">
                             <div class="flex items-center space-x-3 text-xs">
                                 <span class="bg-slate-100 px-2 py-1 rounded-md text-slate-700 font-medium">
@@ -92,45 +97,103 @@
                                 </span>
                             </div>
                         </td>
-                        <td class="px-6 py-4">
+
+                        <!-- Status com Bolinha e Texto Perfeitamente Alinhados -->
+                        <td class="px-6 py-4 whitespace-nowrap">
                             {% if edital.status == 'CLASSIFICADO' %}
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">
-                                ● Homologado
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-emerald-500 shrink-0"></span>
+                                <span>Homologado</span>
                             </span>
                             {% elif edital.status == 'AUDITADO' %}
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-blue-100 text-blue-800 border border-blue-200">
-                                ● Auditado (Pronto)
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-blue-50 text-blue-800 border border-blue-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-blue-500 shrink-0"></span>
+                                <span>Auditado</span>
                             </span>
                             {% elif edital.status == 'IMPORTADO' %}
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">
-                                ● Em Auditoria ({{ edital.pendencias_auditoria_count }} pendências)
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-amber-50 text-amber-800 border border-amber-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-amber-500 shrink-0"></span>
+                                <span>Em Auditoria ({{ edital.pendencias_auditoria_count }})</span>
                             </span>
                             {% else %}
-                            <span class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
-                                ● Aguardando Planilhas
+                            <span class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold bg-slate-100 text-slate-700 border border-slate-200">
+                                <span class="h-1.5 w-1.5 rounded-full bg-slate-400 shrink-0"></span>
+                                <span>Aguardando Planilhas</span>
                             </span>
                             {% endif %}
                         </td>
-                        <td class="px-6 py-4 text-right space-x-2">
-                            {% if edital.status == 'CLASSIFICADO' %}
-                            <a href="{% url 'resultado_final' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition">
-                                Ver Resultado
-                            </a>
-                            <a href="{% url 'frequencia_certificados' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-xs font-semibold shadow-sm transition">
-                                🎓 Frequência & Certificados
-                            </a>
-                            <a href="{% url 'exportar_pdf' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-medium border border-slate-300 transition">
-                                PDF
-                            </a>
-                            {% elif edital.status == 'IMPORTADO' or edital.status == 'AUDITADO' %}
-                            <a href="{% url 'auditoria_semaforo' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition">
-                                Semáforo de Auditoria
-                            </a>
-                            {% else %}
-                            <a href="{% url 'upload_planilhas' edital.id %}" class="inline-flex items-center px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium shadow-sm transition">
-                                Anexar Planilhas
-                            </a>
-                            {% endif %}
+
+                        <!-- Coluna de Ações com Dropdown Elegante -->
+                        <td class="px-6 py-4 text-right whitespace-nowrap">
+                            <div class="relative inline-block text-left edital-dropdown-container">
+                                <!-- Botão que abre o Dropdown -->
+                                <button 
+                                    type="button" 
+                                    onclick="toggleEditalDropdown({{ edital.id }}, event)"
+                                    class="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white hover:bg-slate-50 text-slate-700 text-xs font-semibold rounded-lg border border-slate-300 shadow-2xs transition focus:outline-none focus:ring-2 focus:ring-[#086419] cursor-pointer"
+                                >
+                                    <span>Ações</span>
+                                    <svg class="h-3.5 w-3.5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                    </svg>
+                                </button>
+
+                                <!-- Menu Suspenso (Com Scroll Interno Somente se Necessário e Seleção no Hover) -->
+                                <div 
+                                    id="dropdown-menu-{{ edital.id }}" 
+                                    class="hidden absolute right-0 z-50 mt-1 w-52 origin-top-right rounded-xl bg-white shadow-xl ring-1 ring-black/5 border border-slate-200 p-1.5 focus:outline-none text-left max-h-72 overflow-y-auto"
+                                >
+                                    <!-- Ações de Consulta / Processamento -->
+                                    <div class="space-y-0.5 pb-1">
+                                        {% if edital.status == 'CLASSIFICADO' %}
+                                        <a href="{% url 'resultado_final' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Ver Classificação</span>
+                                        </a>
+                                        <a href="{% url 'frequencia_certificados' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Frequência & Certificados</span>
+                                        </a>
+                                        <a href="{% url 'exportar_pdf' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Ofício Oficial (PDF)</span>
+                                        </a>
+                                        <a href="{% url 'exportar_excel' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Exportar Planilha (Excel)</span>
+                                        </a>
+                                        {% elif edital.status == 'IMPORTADO' or edital.status == 'AUDITADO' %}
+                                        <a href="{% url 'auditoria_semaforo' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Semáforo de Auditoria</span>
+                                        </a>
+                                        <a href="{% url 'upload_planilhas' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Reenviar Planilhas</span>
+                                        </a>
+                                        {% else %}
+                                        <a href="{% url 'upload_planilhas' edital.id %}" class="flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors">
+                                            <span>Anexar Planilhas</span>
+                                        </a>
+                                        {% endif %}
+                                    </div>
+
+                                    <!-- Divisória Discreta -->
+                                    <div class="border-t border-slate-100 my-1"></div>
+
+                                    <!-- Gestão do Edital (Edição e Exclusão) -->
+                                    <div class="space-y-0.5 pt-1">
+                                        <button 
+                                            type="button" 
+                                            onclick="abrirModalEdicao({{ edital.id }}, '{{ edital.titulo|escapejs }}', '{{ edital.semestre|escapejs }}', {{ edital.ano }}, '{{ edital.numero_oficio|escapejs }}', '{{ edital.protocolo|escapejs }}', {{ edital.percentual_cotas }}, {{ edital.percentual_mulheres }})" 
+                                            class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left"
+                                        >
+                                            <span>Editar Informações</span>
+                                        </button>
+                                        <button 
+                                            type="button" 
+                                            onclick="abrirModalExclusao({{ edital.id }}, '{{ edital.titulo|escapejs }} ({{ edital.semestre|escapejs }})')" 
+                                            class="w-full flex items-center px-3 py-2 text-xs font-medium text-rose-600 hover:bg-rose-50 hover:text-rose-700 rounded-lg transition-colors cursor-pointer text-left"
+                                        >
+                                            <span>Excluir Edital</span>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
                         </td>
                     </tr>
                     {% endfor %}
@@ -147,7 +210,7 @@
                 Inicie o primeiro processo seletivo clicando no botão abaixo para configurar os parâmetros e importar as planilhas.
             </p>
             <div class="mt-5">
-                <a href="{% url 'novo_edital' %}" class="inline-flex items-center space-x-2 bg-blue-700 hover:bg-blue-800 text-white font-medium px-4 py-2 rounded-xl shadow-md transition text-sm">
+                <a href="{% url 'novo_edital' %}" class="inline-flex items-center space-x-2 bg-[#086419] hover:bg-[#00420c] text-white font-medium px-4 py-2 rounded-xl shadow-md transition text-sm">
                     <span>+ Cadastrar Primeiro Edital</span>
                 </a>
             </div>
@@ -155,4 +218,134 @@
         {% endif %}
     </div>
 </div>
+
+<!-- MODAL DE EDIÇÃO DE EDITAL -->
+<div id="modal-edicao" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl border border-slate-200">
+        <div class="flex items-center justify-between pb-3 border-b border-slate-100">
+            <h3 class="text-base font-bold text-slate-900">
+                Editar Informações do Edital
+            </h3>
+            <button onclick="fecharModalEdicao()" class="text-slate-400 hover:text-slate-600 font-bold text-lg cursor-pointer">
+                &times;
+            </button>
+        </div>
+        <form method="POST" id="form-edicao" class="space-y-4 mt-4">
+            {% csrf_token %}
+            <div>
+                <label class="block text-xs font-semibold text-slate-700 mb-1">Título do Processo Seletivo</label>
+                <input type="text" name="titulo" id="edit-titulo" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Semestre Letivo</label>
+                    <input type="text" name="semestre" id="edit-semestre" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Ano</label>
+                    <input type="number" name="ano" id="edit-ano" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Número do Ofício</label>
+                    <input type="text" name="numero_oficio" id="edit-oficio" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Protocolo SIPAC</label>
+                    <input type="text" name="protocolo" id="edit-protocolo" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+                </div>
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Cota Mínima Cotistas (%)</label>
+                    <input type="number" step="0.05" min="0" max="1" name="percentual_cotas" id="edit-cotas" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+                </div>
+                <div>
+                    <label class="block text-xs font-semibold text-slate-700 mb-1">Cota Mínima Mulheres (%)</label>
+                    <input type="number" step="0.05" min="0" max="1" name="percentual_mulheres" id="edit-mulheres" required class="w-full px-3 py-2 text-xs border border-slate-300 rounded-lg focus:ring-2 focus:ring-[#086419] focus:outline-none">
+                </div>
+            </div>
+            <div class="flex justify-end space-x-2 pt-3 border-t border-slate-100">
+                <button type="button" onclick="fecharModalEdicao()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer">
+                    Cancelar
+                </button>
+                <button type="submit" class="bg-[#086419] hover:bg-[#00420c] text-white px-5 py-2 text-xs font-semibold rounded-lg shadow transition cursor-pointer">
+                    Salvar Alterações
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+
+<!-- MODAL DE EXCLUSÃO DE EDITAL -->
+<div id="modal-exclusao" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-200">
+        <div class="flex items-center space-x-3 text-rose-600 mb-3">
+            <span class="text-2xl">⚠️</span>
+            <h3 class="text-base font-bold text-slate-900">Excluir Processo Seletivo</h3>
+        </div>
+        <p class="text-xs text-slate-600 leading-relaxed">
+            Tem certeza que deseja excluir o processo <b id="nome-edital-excluir" class="text-slate-900"></b>?
+        </p>
+        <p class="text-[11px] text-rose-700 bg-rose-50 p-2.5 rounded-lg border border-rose-200 mt-2.5">
+            Atenção: Esta ação é definitiva e removerá do banco de dados todas as vagas, candidatos homologados e relatórios deste processo seletivo.
+        </p>
+        <form method="POST" id="form-exclusao" class="flex justify-end space-x-2 mt-5">
+            {% csrf_token %}
+            <button type="button" onclick="fecharModalExclusao()" class="px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-100 rounded-lg transition cursor-pointer">
+                Cancelar
+            </button>
+            <button type="submit" class="bg-rose-600 hover:bg-rose-700 text-white px-5 py-2 text-xs font-semibold rounded-lg shadow transition cursor-pointer">
+                Sim, Excluir Edital
+            </button>
+        </form>
+    </div>
+</div>
+
+<script>
+    function toggleEditalDropdown(id, event) {
+        event.stopPropagation();
+        const menu = document.getElementById('dropdown-menu-' + id);
+        const allMenus = document.querySelectorAll('[id^="dropdown-menu-"]');
+        allMenus.forEach(m => {
+            if (m !== menu) m.classList.add('hidden');
+        });
+        menu.classList.toggle('hidden');
+    }
+
+    window.addEventListener('click', function(e) {
+        if (!e.target.closest('.edital-dropdown-container')) {
+            document.querySelectorAll('[id^="dropdown-menu-"]').forEach(m => m.classList.add('hidden'));
+        }
+    });
+
+    function abrirModalEdicao(id, titulo, semestre, ano, oficio, protocolo, cotas, mulheres) {
+        document.querySelectorAll('[id^="dropdown-menu-"]').forEach(m => m.classList.add('hidden'));
+        document.getElementById('form-edicao').action = '/edital/' + id + '/editar/';
+        document.getElementById('edit-titulo').value = titulo;
+        document.getElementById('edit-semestre').value = semestre;
+        document.getElementById('edit-ano').value = ano;
+        document.getElementById('edit-oficio').value = oficio;
+        document.getElementById('edit-protocolo').value = protocolo;
+        document.getElementById('edit-cotas').value = cotas;
+        document.getElementById('edit-mulheres').value = mulheres;
+        document.getElementById('modal-edicao').classList.remove('hidden');
+    }
+
+    function fecharModalEdicao() {
+        document.getElementById('modal-edicao').classList.add('hidden');
+    }
+
+    function abrirModalExclusao(id, titulo) {
+        document.querySelectorAll('[id^="dropdown-menu-"]').forEach(m => m.classList.add('hidden'));
+        document.getElementById('form-exclusao').action = '/edital/' + id + '/excluir/';
+        document.getElementById('nome-edital-excluir').innerText = titulo;
+        document.getElementById('modal-exclusao').classList.remove('hidden');
+    }
+
+    function fecharModalExclusao() {
+        document.getElementById('modal-exclusao').classList.add('hidden');
+    }
+</script>
 {% endblock %}

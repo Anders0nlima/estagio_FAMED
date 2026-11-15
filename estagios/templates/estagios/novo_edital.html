@@ -1,59 +1,61 @@
 {% extends 'estagios/base.html' %}
 
-{% block title %}Novo Edital - Configuração do Processo Seletivo{% endblock %}
+{% block title %}{% if modo_edicao %}Editar Edital{% else %}Novo Edital{% endif %} - Configuração do Processo Seletivo{% endblock %}
 
 {% block content %}
 <div class="max-w-3xl mx-auto space-y-6">
     <div class="border-b border-slate-200 pb-3">
-        <a href="{% url 'dashboard' %}" class="text-xs font-semibold text-blue-600 hover:text-blue-800 transition mb-2 inline-block">
+        <a href="{% url 'dashboard' %}" class="text-xs font-semibold text-[#086419] hover:text-[#00420c] transition mb-2 inline-block">
             ← Voltar ao Dashboard
         </a>
-        <h1 class="text-2xl font-bold tracking-tight text-slate-900">Novo Processo Seletivo de Estágio</h1>
+        <h1 class="text-2xl font-bold tracking-tight text-slate-900">
+            {% if modo_edicao %}Editar Informações do Edital{% else %}Novo Processo Seletivo de Estágio{% endif %}
+        </h1>
         <p class="text-sm text-slate-500">Defina a identificação do edital e confirme as regras matemáticas e parâmetros de ação afirmativa.</p>
     </div>
 
-    <form method="POST" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
+    <form method="POST" class="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6 overflow-visible">
         {% csrf_token %}
 
         <!-- Seção 1: Identificação -->
         <div>
             <h2 class="text-base font-bold text-slate-800 border-b border-slate-100 pb-2 mb-4 flex items-center space-x-2">
-                <span class="h-6 w-6 rounded-full bg-blue-100 text-blue-800 text-xs flex items-center justify-center font-bold">1</span>
+                <span class="h-6 w-6 rounded-full bg-emerald-100 text-[#086419] text-xs flex items-center justify-center font-bold">1</span>
                 <span>Identificação do Edital</span>
             </h2>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div class="sm:col-span-2">
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Título do Edital</label>
-                    <input type="text" name="titulo" required value="Estágio de Férias FAMED 2026.1 / JULHO 2026"
-                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm">
+                    <input type="text" name="titulo" required value="{{ edital.titulo|default:'Estágio de Férias FAMED 2026.1 / JULHO 2026' }}"
+                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Semestre / Período</label>
-                    <input type="text" name="semestre" required value="2026.1"
+                    <input type="text" name="semestre" required value="{{ edital.semestre|default:'2026.1' }}"
                         placeholder="Ex: 2026.1 ou JULHO 2026"
-                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm">
+                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Ano de Referência</label>
-                    <input type="number" name="ano" required value="2026" min="2020" max="2035"
-                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm">
+                    <input type="number" name="ano" required value="{{ edital.ano|default:2026 }}" min="2020" max="2035"
+                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Número do Ofício</label>
-                    <input type="text" name="numero_oficio" required value="414 / 2026"
+                    <input type="text" name="numero_oficio" required value="{{ edital.numero_oficio|default:'414 / 2026' }}"
                         placeholder="Ex: 414 / 2026"
-                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm">
+                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Nº do Protocolo SIPAC</label>
-                    <input type="text" name="protocolo" required value="23073.092158/2026-14"
+                    <input type="text" name="protocolo" required value="{{ edital.protocolo|default:'23073.092158/2026-14' }}"
                         placeholder="Ex: 23073.092158/2026-14"
-                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm">
+                        class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
             </div>
         </div>
@@ -61,42 +63,103 @@
         <!-- Seção 2: Parâmetros de Seleção e Ações Afirmativas -->
         <div>
             <h2 class="text-base font-bold text-slate-800 border-b border-slate-100 pb-2 mb-4 flex items-center space-x-2">
-                <span class="h-6 w-6 rounded-full bg-blue-100 text-blue-800 text-xs flex items-center justify-center font-bold">2</span>
+                <span class="h-6 w-6 rounded-full bg-emerald-100 text-[#086419] text-xs flex items-center justify-center font-bold">2</span>
                 <span>Parâmetros de Seleção & Ações Afirmativas</span>
             </h2>
 
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <!-- Dropdown 1: Cotas (Padronizado) -->
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">
                         Reserva de Vagas para Cotas (%)
                     </label>
-                    <select name="percentual_cotas" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm bg-white">
-                        <option value="0.5" selected>50% Cotas (Padrão Federal Lei 12.711)</option>
-                        <option value="0.2">20% Cotas</option>
-                        <option value="0.0">Sem Cotas (100% Ampla Concorrência)</option>
-                    </select>
+                    <div class="relative custom-dropdown-container">
+                        <input type="hidden" name="percentual_cotas" id="input-percentual-cotas" value="{{ edital.percentual_cotas|default:'0.5' }}">
+                        <button 
+                            type="button" 
+                            onclick="toggleFormDropdown('menu-cotas', event)"
+                            class="w-full flex items-center justify-between px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-sm rounded-lg border border-slate-300 shadow-2xs transition focus:outline-none focus:ring-2 focus:ring-[#086419] cursor-pointer"
+                        >
+                            <span id="label-cotas">
+                                {% if edital.percentual_cotas == 0.2 %}20% Cotas
+                                {% elif edital.percentual_cotas == 0.0 %}Sem Cotas (100% Ampla Concorrência)
+                                {% else %}50% Cotas (Padrão Federal Lei 12.711){% endif %}
+                            </span>
+                            <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        <div 
+                            id="menu-cotas" 
+                            class="hidden absolute left-0 right-0 z-50 mt-1 origin-top rounded-xl bg-white shadow-xl ring-1 ring-black/5 border border-slate-200 p-1.5 focus:outline-none text-left"
+                        >
+                            <div class="space-y-0.5">
+                                <button type="button" onclick="selectOption('cotas', '0.5', '50% Cotas (Padrão Federal Lei 12.711)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>50% Cotas (Padrão Federal Lei 12.711)</span>
+                                </button>
+                                <button type="button" onclick="selectOption('cotas', '0.2', '20% Cotas')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>20% Cotas</span>
+                                </button>
+                                <button type="button" onclick="selectOption('cotas', '0.0', 'Sem Cotas (100% Ampla Concorrência)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>Sem Cotas (100% Ampla Concorrência)</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <span class="text-[11px] text-slate-400 mt-1 block">Cotistas com nota suficiente entram na Ampla sem gastar a cota reservada.</span>
                 </div>
 
+                <!-- Dropdown 2: Mulheres (Padronizado) -->
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">
                         Cota Mínima de Mulheres (%)
                     </label>
-                    <select name="percentual_mulheres" class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-blue-600 text-sm bg-white">
-                        <option value="0.5" selected>50% Mulheres (AC e Cotas)</option>
-                        <option value="0.4">40% Mulheres</option>
-                        <option value="0.0">Sem cota de gênero</option>
-                    </select>
+                    <div class="relative custom-dropdown-container">
+                        <input type="hidden" name="percentual_mulheres" id="input-percentual-mulheres" value="{{ edital.percentual_mulheres|default:'0.5' }}">
+                        <button 
+                            type="button" 
+                            onclick="toggleFormDropdown('menu-mulheres', event)"
+                            class="w-full flex items-center justify-between px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-sm rounded-lg border border-slate-300 shadow-2xs transition focus:outline-none focus:ring-2 focus:ring-[#086419] cursor-pointer"
+                        >
+                            <span id="label-mulheres">
+                                {% if edital.percentual_mulheres == 0.4 %}40% Mulheres
+                                {% elif edital.percentual_mulheres == 0.0 %}Sem cota de gênero
+                                {% else %}50% Mulheres (AC e Cotas){% endif %}
+                            </span>
+                            <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        <div 
+                            id="menu-mulheres" 
+                            class="hidden absolute left-0 right-0 z-50 mt-1 origin-top rounded-xl bg-white shadow-xl ring-1 ring-black/5 border border-slate-200 p-1.5 focus:outline-none text-left"
+                        >
+                            <div class="space-y-0.5">
+                                <button type="button" onclick="selectOption('mulheres', '0.5', '50% Mulheres (AC e Cotas)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>50% Mulheres (AC e Cotas)</span>
+                                </button>
+                                <button type="button" onclick="selectOption('mulheres', '0.4', '40% Mulheres')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>40% Mulheres</span>
+                                </button>
+                                <button type="button" onclick="selectOption('mulheres', '0.0', 'Sem cota de gênero')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>Sem cota de gênero</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                     <span class="text-[11px] text-slate-400 mt-1 block">Caso não atinja 50%, permuta o homem de menor CRG pela mulher de maior CRG.</span>
                 </div>
 
-                <div class="sm:col-span-2 bg-slate-50 p-4 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-2">
-                    <div class="font-bold text-slate-800 flex items-center space-x-1.5">
-                        <span>⚙ Regras Fixas Homologadas pelo Edital:</span>
+                <!-- Regras Fixas Homologadas (Corrigido o \to e Estilo FAMED) -->
+                <div class="sm:col-span-2 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200/80 text-xs text-slate-700 space-y-2">
+                    <div class="font-bold text-[#086419] flex items-center space-x-1.5">
+                        <span>Regras Fixas Homologadas pelo Edital:</span>
                     </div>
                     <ul class="list-disc list-inside space-y-1 text-slate-600">
                         <li><b>Divisão por Ciclos:</b> Ciclo Básico (1º ao 4º sem), Ciclo Clínico (5º ao 8º sem), Internato (9º ao 12º sem).</li>
-                        <li><b>Critérios Estritos de Desempate:</b> 1º Maior CRG $\to$ 2º Maior Idade (data de nascimento mais antiga) $\to$ 3º Timestamp de Inscrição.</li>
+                        <li><b>Critérios Estritos de Desempate:</b> 1º Maior CRG → 2º Maior Idade (data de nascimento mais antiga) → 3º Timestamp de Inscrição.</li>
                         <li><b>Remanejamento de Opções:</b> 1ª Opção processada primeiro; vagas remanescentes alocadas aos candidatos de 2ª Opção.</li>
                     </ul>
                 </div>
@@ -107,11 +170,35 @@
             <a href="{% url 'dashboard' %}" class="px-4 py-2 rounded-lg text-slate-600 hover:text-slate-800 text-sm font-medium transition">
                 Cancelar
             </a>
-            <button type="submit" class="bg-blue-700 hover:bg-blue-800 text-white font-medium px-5 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-sm">
-                <span>Criar Edital e Ir para Upload</span>
+            <button type="submit" class="bg-[#086419] hover:bg-[#00420c] text-white font-medium px-5 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-sm cursor-pointer">
+                <span>{% if modo_edicao %}Salvar Alterações do Edital{% else %}Criar Edital e Ir para Upload{% endif %}</span>
                 <span>→</span>
             </button>
         </div>
     </form>
 </div>
+
+<script>
+    function toggleFormDropdown(menuId, event) {
+        event.stopPropagation();
+        const menu = document.getElementById(menuId);
+        const allMenus = document.querySelectorAll('[id^="menu-"]');
+        allMenus.forEach(m => {
+            if (m !== menu) m.classList.add('hidden');
+        });
+        menu.classList.toggle('hidden');
+    }
+
+    function selectOption(type, value, label) {
+        document.getElementById('input-percentual-' + type).value = value;
+        document.getElementById('label-' + type).innerText = label;
+        document.getElementById('menu-' + type).classList.add('hidden');
+    }
+
+    window.addEventListener('click', function(e) {
+        if (!e.target.closest('.custom-dropdown-container')) {
+            document.querySelectorAll('[id^="menu-"]').forEach(m => m.classList.add('hidden'));
+        }
+    });
+</script>
 {% endblock %}

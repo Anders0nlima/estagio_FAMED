@@ -597,17 +597,30 @@ def salvar_frequencias_em_lote(edital: Edital, dados_frequencia: Dict[str, Any])
             except ValueError:
                 freq_val = None
 
-        if status_val == 'APTO' or (freq_val is not None and freq_val >= 75.0):
-            r.concluiu_estagio = True
-            r.frequencia_percentual = freq_val
-            r.justificativa_frequencia = f"Apto: Cumpriu estágio com sucesso ({f'{freq_val:.1f}%' if freq_val is not None else 'Presença validada'})."
-        elif status_val == 'REPROVADO' or (freq_val is not None and freq_val < 75.0):
+        if status_val == 'REPROVADO':
             r.concluiu_estagio = False
-            r.frequencia_percentual = freq_val
-            r.justificativa_frequencia = f"Reprovado: {f'Frequência insuficiente ({freq_val:.1f}% < 75%)' if freq_val is not None else 'Frequência insuficiente informada pelo supervisor'}."
+            r.frequencia_percentual = freq_val if freq_val is not None else 0.0
+            r.justificativa_frequencia = f"Reprovado: {f'Frequência insuficiente ({r.frequencia_percentual:.1f}% < 75%)' if r.frequencia_percentual is not None else 'Frequência insuficiente informada pelo supervisor.'}"
+        elif status_val == 'APTO':
+            r.concluiu_estagio = True
+            r.frequencia_percentual = freq_val if freq_val is not None else 100.0
+            r.justificativa_frequencia = f"Apto: Cumpriu estágio com sucesso ({r.frequencia_percentual:.1f}%)."
+        elif status_val == 'PENDENTE':
+            r.concluiu_estagio = False
+            r.frequencia_percentual = None
+            r.justificativa_frequencia = "Estágio em andamento / Frequência pendente"
+        elif freq_val is not None:
+            if freq_val >= 75.0:
+                r.concluiu_estagio = True
+                r.frequencia_percentual = freq_val
+                r.justificativa_frequencia = f"Apto: Cumpriu estágio com sucesso ({freq_val:.1f}%)."
+            else:
+                r.concluiu_estagio = False
+                r.frequencia_percentual = freq_val
+                r.justificativa_frequencia = f"Reprovado: Frequência insuficiente ({freq_val:.1f}% < 75%)."
         else:
             r.concluiu_estagio = False
-            r.frequencia_percentual = freq_val
+            r.frequencia_percentual = None
             r.justificativa_frequencia = "Estágio em andamento / Frequência pendente"
         
         r.save()

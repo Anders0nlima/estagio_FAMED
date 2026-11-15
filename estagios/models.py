@@ -100,6 +100,10 @@ class Candidato(models.Model):
     def __str__(self):
         return f"{self.nome} ({self.matricula}) - CRG: {self.crg_oficial}"
 
+    @property
+    def crg_oficial_dot(self):
+        return f"{self.crg_oficial:.4f}"
+
 class Resultado(models.Model):
     STATUS_RESULTADO = [
         ('APROVADO', 'Aprovado'),
@@ -137,6 +141,14 @@ class Resultado(models.Model):
 
     def __str__(self):
         return f"{self.candidato.nome} - {self.status} na Opção {self.oportunidade.codigo_opcao if self.oportunidade else 'N/A'}"
+
+    @property
+    def status_conclusao(self):
+        if self.concluiu_estagio:
+            return 'APTO'
+        if self.frequencia_percentual is not None or (self.justificativa_frequencia and 'reprovad' in self.justificativa_frequencia.lower()):
+            return 'REPROVADO'
+        return 'PENDENTE'
 
 class LogDecisao(models.Model):
     edital = models.ForeignKey(Edital, on_delete=models.CASCADE, related_name='logs')
