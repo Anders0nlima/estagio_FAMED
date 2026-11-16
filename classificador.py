@@ -297,6 +297,76 @@ def determine_cycle(semester: int) -> str:
     else:
         return 'internato'
 
+def parse_semestres_permitidos(text: Any) -> List[int]:
+    """
+    Interpreta requisitos de semestres a partir de texto livre das vagas ou códigos de ciclo.
+    Exemplos:
+    - 'Alunos que cursaram do 9º ao 11º semestre em 2026.4.' -> [9, 10, 11]
+    - 'Alunos que cursaram 7º ou 8º semestre em 2026.4.' -> [7, 8]
+    - 'Alunos que cursaram do 5º ao 8º semestre em 2026.4.' -> [5, 6, 7, 8]
+    - 'A partir do 7o semestre' -> [7, 8, 9, 10, 11, 12]
+    - 'clinico,internato' -> [5, 6, 7, 8, 9, 10, 11, 12]
+    - 'basico' -> [1, 2, 3, 4]
+    - 'Qualquer semestre' -> [1, 2, ..., 12]
+    """
+    if not text:
+        return list(range(1, 13))
+    t = str(text).lower().strip()
+    if 'qualquer' in t or 'todos' in t or t == 'todos os semestres':
+        return list(range(1, 13))
+    
+    # Remove anos letivos como 2026.4, 2026.1, 2026/2, 2026, 2027
+    t_clean = re.sub(r'\b20\d{2}(?:[\./]\d+)?\b', ' ', t)
+    # Remove datas como 24/7/26, 01/07 a 17/07
+    t_clean = re.sub(r'\b\d{1,2}/\d{1,2}(?:/\d{2,4})?\b', ' ', t_clean)
+    # Remove horários como 8-12h, 15h às 19h, 8h
+    t_clean = re.sub(r'\b\d{1,2}(?:h\d{0,2})?\s*(?:às|as|-)\s*\d{1,2}h\b', ' ', t_clean)
+    t_clean = re.sub(r'\b\d{1,2}h\b', ' ', t_clean)
+
+    semestres = set()
+    # Ciclos de formação
+    if 'basico' in t_clean or 'básico' in t_clean:
+        semestres.update([1, 2, 3, 4])
+    if 'clinico' in t_clean or 'clínico' in t_clean:
+        semestres.update([5, 6, 7, 8])
+    if 'internato' in t_clean:
+        semestres.update([9, 10, 11, 12])
+        
+    # 'a partir do X'
+    m_partir = re.search(r'a partir d[oe]\s*(\d+)', t_clean)
+    if m_partir:
+        start = int(m_partir.group(1))
+        semestres.update(range(start, 13))
+        
+    # Intervalos: '1o-7o', '5o-7o', '10-11o', '9º ao 11º', '1° ao 7°', '5 a 8'
+    range_matches = re.findall(r'(\d+)\s*(?:[ºo°]?\s*(?:ao|a|-)\s*)(\d+)\s*[ºo°]?', t_clean)
+    for start_s, end_s in range_matches:
+        s_val, e_val = int(start_s), int(end_s)
+        if 1 <= s_val <= 12 and 1 <= e_val <= 12 and s_val <= e_val:
+            semestres.update(range(s_val, e_val + 1))
+            
+    # Palavras ordinais
+    if 'sétimo' in t_clean or 'setimo' in t_clean: semestres.add(7)
+    if 'oitavo' in t_clean: semestres.add(8)
+    if 'nono' in t_clean: semestres.add(9)
+    if 'décimo' in t_clean or 'decimo' in t_clean: semestres.add(10)
+
+    # Números ordinais ou com palavra 'semestre'
+    num_matches = re.findall(r'(\d+)\s*(?:[ºo°]|semestre)', t_clean)
+    for n_str in num_matches:
+        val = int(n_str)
+        if 1 <= val <= 12:
+            semestres.add(val)
+
+    # Fallback se apenas números separados por vírgula ou espaço (ex: '7, 8' ou '9 10 11')
+    if not semestres:
+        for n_str in re.findall(r'\b(\d+)\b', t_clean):
+            val = int(n_str)
+            if 1 <= val <= 12:
+                semestres.add(val)
+
+    return sorted(list(semestres)) if semestres else list(range(1, 13))
+
 
 # =============================================================================
 # 3. ESTRUTURAS DE DADOS
@@ -337,6 +407,7 @@ class Opportunity:
     periodo: str
     vagas_total: int
     ciclos_permitidos: List[str]  # ['basico', 'clinico', 'internato']
+    semestres_permitidos: List[int] = field(default_factory=list)
     vagas_por_ciclo: Dict[str, int] = field(default_factory=dict)
     percentual_cotas: float = 0.5
     percentual_mulheres: float = 0.5
@@ -516,6 +587,9 @@ def load_opportunities(vagas_file: Optional[str] = None) -> Dict[str, Opportunit
     """
     opp_dict = {}
     for op in OPORTUNIDADES_CANONICAS:
+        sems = op.get('semestres_permitidos')
+        if not sems:
+            sems = parse_semestres_permitidos(",".join(op['ciclos_permitidos']))
         opp_dict[op['id']] = Opportunity(
             id=op['id'],
             professor=op['professor'],
@@ -524,6 +598,7 @@ def load_opportunities(vagas_file: Optional[str] = None) -> Dict[str, Opportunit
             periodo=op['periodo'],
             vagas_total=op['vagas_total'],
             ciclos_permitidos=op['ciclos_permitidos'],
+            semestres_permitidos=sems,
             vagas_por_ciclo={},
             percentual_cotas=0.5,
             percentual_mulheres=0.5,
@@ -548,7 +623,7 @@ def load_cotas_csv(csv_path: str) -> Dict[str, Dict[str, Any]]:
 
     # Palavras-chave indicativas de cota no sistema da UFPA
     PALAVRAS_COTA = ['COTA', 'GRUPO', 'PPI', 'RENDA', 'PCD', 'QUILOMBOLA', 'INDÍGENA', 'INDIGENA',
-                     'ESCOLA PUBLICA', 'ESCOLA PÚBLICA', 'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14']
+                     'PSEI', 'PSEQ', 'ESCOLA PUBLICA', 'ESCOLA PÚBLICA', 'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14']
 
     # Tenta ler com separador vírgula ou ponto-e-vírgula
     for sep in [';', ',', '\t']:
@@ -772,12 +847,13 @@ def allocate_opportunity(
     pool = sort_candidates(eligible_candidates)
 
     # 1. Definir quantidade de vagas de AC e Cotas
-    if vagas_disponiveis == 1:
-        vagas_ac = 1
-        vagas_cotas = 0
+    # Regra: As vagas serão distribuídas igualmente entre cotistas e não cotistas.
+    # Quando o número de vagas for ímpar, a vaga excedente será destinada aos cotistas (math.ceil).
+    if opp.percentual_cotas > 0:
+        vagas_cotas = math.ceil(vagas_disponiveis * opp.percentual_cotas)
     else:
-        vagas_cotas = int(vagas_disponiveis * opp.percentual_cotas)
-        vagas_ac = vagas_disponiveis - vagas_cotas
+        vagas_cotas = 0
+    vagas_ac = max(0, vagas_disponiveis - vagas_cotas)
 
     logs.append(f"Divisão de vagas da oportunidade: AC = {vagas_ac}, Cotas = {vagas_cotas}")
 
@@ -787,42 +863,50 @@ def allocate_opportunity(
     ac_selecionados: List[Student] = pool[:vagas_ac]
     pool_restante = pool[vagas_ac:]
 
+    # Se houver menos candidatos que vagas na ampla, as vagas excedentes revertem para cotas
+    if len(ac_selecionados) < vagas_ac:
+        vagas_sobrando_ac = vagas_ac - len(ac_selecionados)
+        vagas_cotas += vagas_sobrando_ac
+        logs.append(f"[Reversão AC -> Cotas] {vagas_sobrando_ac} vaga(s) da ampla revertida(s) para cotas por falta de candidatos.")
+
     logs.append(f"[AC] Seleção preliminar por maior nota: {[f'{s.nome} ({s.genero}, CRG={s.crg:.4f})' for s in ac_selecionados]}")
 
-    # ETAPA 2: Verificação dos 50% de Mulheres na AC
-    mulheres_alvo_ac = math.ceil(len(ac_selecionados) * opp.percentual_mulheres)
-    mulheres_atuais_ac = sum(1 for s in ac_selecionados if s.genero == 'F')
-    logs.append(f"[AC Gênero] Mulheres presentes: {mulheres_atuais_ac}/{len(ac_selecionados)} (Meta mínima: {mulheres_alvo_ac})")
+    # ETAPA 2: Verificação dos 50% de Mulheres na AC (apenas se critério de gênero estiver ativado)
+    if opp.percentual_mulheres > 0.0 and ac_selecionados:
+        mulheres_alvo_ac = math.ceil(len(ac_selecionados) * opp.percentual_mulheres)
+        mulheres_atuais_ac = sum(1 for s in ac_selecionados if s.genero == 'F')
+        logs.append(f"[AC Gênero] Mulheres presentes: {mulheres_atuais_ac}/{len(ac_selecionados)} (Meta mínima: {mulheres_alvo_ac})")
 
-    while mulheres_atuais_ac < mulheres_alvo_ac:
-        # Encontrar o homem com menor CRG dentro da AC
-        homens_ac = [s for s in ac_selecionados if s.genero == 'M']
-        if not homens_ac:
-            break
-        # Menor homem na AC (último do ranking)
-        menor_homem = homens_ac[-1]
+        while mulheres_atuais_ac < mulheres_alvo_ac:
+            # Encontrar o homem com menor CRG dentro da AC
+            homens_ac = [s for s in ac_selecionados if s.genero == 'M']
+            if not homens_ac:
+                break
+            menor_homem = homens_ac[-1]
 
-        # Encontrar a mulher com maior CRG fora da AC
-        mulheres_fora = [s for s in pool_restante if s.genero == 'F']
-        if not mulheres_fora:
-            logs.append("[AC Gênero] Não há candidatas mulheres restantes para substituição na cota de 50%.")
-            break
-        maior_mulher = mulheres_fora[0]
+            # Encontrar a mulher com maior CRG fora da AC
+            mulheres_fora = [s for s in pool_restante if s.genero == 'F']
+            if not mulheres_fora:
+                logs.append("[AC Gênero] Não há candidatas mulheres restantes para substituição na cota de 50%.")
+                break
+            maior_mulher = mulheres_fora[0]
 
-        # Efetuar a troca
-        ac_selecionados.remove(menor_homem)
-        pool_restante.append(menor_homem)
-        pool_restante = sort_candidates(pool_restante)
+            # Efetuar a troca
+            ac_selecionados.remove(menor_homem)
+            pool_restante.append(menor_homem)
+            pool_restante = sort_candidates(pool_restante)
 
-        pool_restante.remove(maior_mulher)
-        ac_selecionados.append(maior_mulher)
-        ac_selecionados = sort_candidates(ac_selecionados)
+            pool_restante.remove(maior_mulher)
+            ac_selecionados.append(maior_mulher)
+            ac_selecionados = sort_candidates(ac_selecionados)
 
-        mulheres_atuais_ac += 1
-        msg_swap = (f"[AC Gênero - Ação Afirmativa] Troca realizada: Aluna {maior_mulher.nome} (CRG {maior_mulher.crg:.4f}) "
-                    f"substituiu o aluno {menor_homem.nome} (CRG {menor_homem.crg:.4f}) para cumprir os 50% de mulheres na AC.")
-        logs.append(msg_swap)
-        maior_mulher.historico_auditoria.append(msg_swap)
+            mulheres_atuais_ac += 1
+            msg_swap = (f"[AC Gênero - Ação Afirmativa] Troca realizada: Aluna {maior_mulher.nome} (CRG {maior_mulher.crg:.4f}) "
+                        f"substituiu o aluno {menor_homem.nome} (CRG {menor_homem.crg:.4f}) para cumprir os 50% de mulheres na AC.")
+            logs.append(msg_swap)
+            maior_mulher.historico_auditoria.append(msg_swap)
+    else:
+        logs.append("[Gênero AC] Ação afirmativa de gênero desativada ou não aplicável.")
 
     # -------------------------------------------------------------
     # ETAPA 3: Preenchimento das Vagas de Cotas
@@ -843,36 +927,39 @@ def allocate_opportunity(
             vagas_cotas_restantes = vagas_cotas - len(cotas_selecionados)
             logs.append(f"[Cotas] Seleção preliminar de cotistas: {[f'{s.nome} ({s.genero}, CRG={s.crg:.4f})' for s in cotas_selecionados]}")
 
-            # ETAPA 4: Verificação dos 50% de Mulheres nas Cotas
-            mulheres_alvo_cotas = math.ceil(len(cotas_selecionados) * opp.percentual_mulheres)
-            mulheres_atuais_cotas = sum(1 for s in cotas_selecionados if s.genero == 'F')
-            logs.append(f"[Cotas Gênero] Mulheres cotistas presentes: {mulheres_atuais_cotas}/{len(cotas_selecionados)} (Meta mínima: {mulheres_alvo_cotas})")
+            # ETAPA 4: Verificação dos 50% de Mulheres nas Cotas (apenas se critério de gênero estiver ativado)
+            if opp.percentual_mulheres > 0.0 and cotas_selecionados:
+                mulheres_alvo_cotas = math.ceil(len(cotas_selecionados) * opp.percentual_mulheres)
+                mulheres_atuais_cotas = sum(1 for s in cotas_selecionados if s.genero == 'F')
+                logs.append(f"[Cotas Gênero] Mulheres cotistas presentes: {mulheres_atuais_cotas}/{len(cotas_selecionados)} (Meta mínima: {mulheres_alvo_cotas})")
 
-            while mulheres_atuais_cotas < mulheres_alvo_cotas:
-                homens_cotas = [s for s in cotas_selecionados if s.genero == 'M']
-                if not homens_cotas:
-                    break
-                menor_homem_cota = homens_cotas[-1]
+                while mulheres_atuais_cotas < mulheres_alvo_cotas:
+                    homens_cotas = [s for s in cotas_selecionados if s.genero == 'M']
+                    if not homens_cotas:
+                        break
+                    menor_homem_cota = homens_cotas[-1]
 
-                mulheres_cotistas_fora = [s for s in pool_restante if s.is_cotista and s.genero == 'F']
-                if not mulheres_cotistas_fora:
-                    logs.append("[Cotas Gênero] Não há mais mulheres cotistas fora da lista para permuta de gênero.")
-                    break
-                maior_mulher_cota = mulheres_cotistas_fora[0]
+                    mulheres_cotistas_fora = [s for s in pool_restante if s.is_cotista and s.genero == 'F']
+                    if not mulheres_cotistas_fora:
+                        logs.append("[Cotas Gênero] Não há mais mulheres cotistas fora da lista para permuta de gênero.")
+                        break
+                    maior_mulher_cota = mulheres_cotistas_fora[0]
 
-                cotas_selecionados.remove(menor_homem_cota)
-                pool_restante.append(menor_homem_cota)
-                pool_restante = sort_candidates(pool_restante)
+                    cotas_selecionados.remove(menor_homem_cota)
+                    pool_restante.append(menor_homem_cota)
+                    pool_restante = sort_candidates(pool_restante)
 
-                pool_restante.remove(maior_mulher_cota)
-                cotas_selecionados.append(maior_mulher_cota)
-                cotas_selecionados = sort_candidates(cotas_selecionados)
+                    pool_restante.remove(maior_mulher_cota)
+                    cotas_selecionados.append(maior_mulher_cota)
+                    cotas_selecionados = sort_candidates(cotas_selecionados)
 
-                mulheres_atuais_cotas += 1
-                msg_cota_swap = (f"[Cotas Gênero - Ação Afirmativa] Troca nas cotas: Aluna {maior_mulher_cota.nome} (CRG {maior_mulher_cota.crg:.4f}) "
-                                 f"substituiu {menor_homem_cota.nome} (CRG {menor_homem_cota.crg:.4f}) na vaga reservada de cotas.")
-                logs.append(msg_cota_swap)
-                maior_mulher_cota.historico_auditoria.append(msg_cota_swap)
+                    mulheres_atuais_cotas += 1
+                    msg_cota_swap = (f"[Cotas Gênero - Ação Afirmativa] Troca nas cotas: Aluna {maior_mulher_cota.nome} (CRG {maior_mulher_cota.crg:.4f}) "
+                                     f"substituiu {menor_homem_cota.nome} (CRG {menor_homem_cota.crg:.4f}) na vaga reservada de cotas.")
+                    logs.append(msg_cota_swap)
+                    maior_mulher_cota.historico_auditoria.append(msg_cota_swap)
+            else:
+                logs.append("[Gênero Cotas] Ação afirmativa de gênero desativada ou não aplicável.")
 
         # ETAPA 5: Reversão de sobras de Cotas para a Ampla Concorrência
         if vagas_cotas_restantes > 0:
@@ -930,15 +1017,23 @@ def run_classification(
         # Filtra alunos que escolheram esta oportunidade como 1ª opção
         candidatos_op1 = [s for s in students if not s.alocado and s.op1 == opp_id]
         
-        # Filtra por ciclo permitido
-        candidatos_elegiveis = [s for s in candidatos_op1 if s.ciclo in opp.ciclos_permitidos]
-        descartados_ciclo = [s for s in candidatos_op1 if s.ciclo not in opp.ciclos_permitidos]
-        
-        for d in descartados_ciclo:
-            msg_ciclo = (f"[Ciclo Incompatível] Aluno(a) {d.nome} (Semestre {d.semestre_atual}, Ciclo {d.ciclo}) "
-                         f"não é elegível para a Opção {opp.id} (Ciclos permitidos: {opp.ciclos_permitidos}).")
-            d.historico_auditoria.append(msg_ciclo)
-            audit_trail.append(msg_ciclo)
+        # Filtra por semestres permitidos (ou ciclo como fallback)
+        if opp.semestres_permitidos:
+            candidatos_elegiveis = [s for s in candidatos_op1 if s.semestre_atual in opp.semestres_permitidos]
+            descartados = [s for s in candidatos_op1 if s.semestre_atual not in opp.semestres_permitidos]
+            for d in descartados:
+                msg_sem = (f"[Semestre Incompatível] Aluno(a) {d.nome} ({d.semestre_atual}º semestre) "
+                           f"não atende aos requisitos da Opção {opp.id} (Semestres permitidos: {opp.semestres_permitidos}).")
+                d.historico_auditoria.append(msg_sem)
+                audit_trail.append(msg_sem)
+        else:
+            candidatos_elegiveis = [s for s in candidatos_op1 if s.ciclo in opp.ciclos_permitidos]
+            descartados_ciclo = [s for s in candidatos_op1 if s.ciclo not in opp.ciclos_permitidos]
+            for d in descartados_ciclo:
+                msg_ciclo = (f"[Ciclo Incompatível] Aluno(a) {d.nome} (Semestre {d.semestre_atual}, Ciclo {d.ciclo}) "
+                             f"não é elegível para a Opção {opp.id} (Ciclos permitidos: {opp.ciclos_permitidos}).")
+                d.historico_auditoria.append(msg_ciclo)
+                audit_trail.append(msg_ciclo)
 
         selecionados, espera, logs = allocate_opportunity(
             opp=opp,
@@ -974,13 +1069,20 @@ def run_classification(
             if not s.alocado and (opp_id in s.op2_list)
         ]
         
-        candidatos_elegiveis = [s for s in candidatos_op2 if s.ciclo in opp.ciclos_permitidos]
-        descartados_ciclo = [s for s in candidatos_op2 if s.ciclo not in opp.ciclos_permitidos]
-        
-        for d in descartados_ciclo:
-            msg_ciclo = (f"[Ciclo Incompatível na 2ª Opção] Aluno(a) {d.nome} (Ciclo {d.ciclo}) "
-                         f"não elegível para Opção {opp.id}.")
-            d.historico_auditoria.append(msg_ciclo)
+        if opp.semestres_permitidos:
+            candidatos_elegiveis = [s for s in candidatos_op2 if s.semestre_atual in opp.semestres_permitidos]
+            descartados = [s for s in candidatos_op2 if s.semestre_atual not in opp.semestres_permitidos]
+            for d in descartados:
+                msg_sem = (f"[Semestre Incompatível na 2ª Opção] Aluno(a) {d.nome} ({d.semestre_atual}º semestre) "
+                           f"não atende aos requisitos da Opção {opp.id}.")
+                d.historico_auditoria.append(msg_sem)
+        else:
+            candidatos_elegiveis = [s for s in candidatos_op2 if s.ciclo in opp.ciclos_permitidos]
+            descartados_ciclo = [s for s in candidatos_op2 if s.ciclo not in opp.ciclos_permitidos]
+            for d in descartados_ciclo:
+                msg_ciclo = (f"[Ciclo Incompatível na 2ª Opção] Aluno(a) {d.nome} (Ciclo {d.ciclo}) "
+                             f"não elegível para Opção {opp.id}.")
+                d.historico_auditoria.append(msg_ciclo)
 
         if candidatos_elegiveis:
             novos_selecionados, nova_espera, logs = allocate_opportunity(
@@ -1141,10 +1243,11 @@ def generate_pdf_report(
     # =========================================================================
     # PÁGINA 1: OFÍCIO INSTITUCIONAL
     # =========================================================================
-    # Brasão da República
-    brasao_path = "ufpa_brasao.png"
-    if os.path.exists(brasao_path):
-        story.append(Image(brasao_path, width=1.5 * cm, height=1.9 * cm))
+    # Brasão da República / UFPA
+    brasao_candidates = ["Brasao-UFPA-colorido.png", "estagios/static/img/Brasao-UFPA-colorido.png", "ufpa_brasao.png"]
+    brasao_path = next((p for p in brasao_candidates if os.path.exists(p)), None)
+    if brasao_path:
+        story.append(Image(brasao_path, width=1.5 * cm, height=2.1 * cm))
         story.append(Spacer(1, 4 * mm))
 
     story.append(Paragraph("MINISTÉRIO DA EDUCAÇÃO", style_header_gov))

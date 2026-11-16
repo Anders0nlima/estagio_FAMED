@@ -13,6 +13,7 @@ from .services import (
     confirmar_todas_pendencias,
     executar_classificacao_edital,
     gerar_pdf_oficial_edital,
+    gerar_oficio_word_edital,
     gerar_excel_resultado_edital,
     gerar_planilha_frequencia_preenchida,
     importar_planilha_frequencia,
@@ -65,8 +66,15 @@ def novo_edital_view(request):
         ano = int(request.POST.get('ano', 2026))
         numero_oficio = request.POST.get('numero_oficio', '414 / 2026')
         protocolo = request.POST.get('protocolo', '23073.092158/2026-14')
-        pct_cotas = float(request.POST.get('percentual_cotas', 0.5))
-        pct_mulheres = float(request.POST.get('percentual_mulheres', 0.5))
+        try:
+            pct_cotas = float(str(request.POST.get('percentual_cotas', 0.5)).replace(',', '.'))
+        except (ValueError, TypeError):
+            pct_cotas = 0.5
+        try:
+            pct_mulheres = float(str(request.POST.get('percentual_mulheres', 0.0)).replace(',', '.'))
+        except (ValueError, TypeError):
+            pct_mulheres = 0.0
+        aplicar_genero = (pct_mulheres > 0.0)
 
         edital = Edital.objects.create(
             titulo=titulo,
@@ -76,6 +84,7 @@ def novo_edital_view(request):
             protocolo=protocolo,
             percentual_cotas=pct_cotas,
             percentual_mulheres=pct_mulheres,
+            aplicar_genero=aplicar_genero,
         )
         messages.success(request, f"Edital '{edital.titulo}' criado com sucesso! Agora anexe as planilhas.")
         return redirect('upload_planilhas', edital_id=edital.id)
@@ -95,13 +104,16 @@ def editar_edital_view(request, edital_id):
         edital.numero_oficio = request.POST.get('numero_oficio', edital.numero_oficio)
         edital.protocolo = request.POST.get('protocolo', edital.protocolo)
         try:
-            edital.percentual_cotas = float(request.POST.get('percentual_cotas', edital.percentual_cotas))
+            val_cotas = str(request.POST.get('percentual_cotas', edital.percentual_cotas)).replace(',', '.')
+            edital.percentual_cotas = float(val_cotas)
         except (ValueError, TypeError):
             pass
         try:
-            edital.percentual_mulheres = float(request.POST.get('percentual_mulheres', edital.percentual_mulheres))
+            val_mulheres = str(request.POST.get('percentual_mulheres', edital.percentual_mulheres)).replace(',', '.')
+            edital.percentual_mulheres = float(val_mulheres)
         except (ValueError, TypeError):
             pass
+        edital.aplicar_genero = (edital.percentual_mulheres > 0.0)
         edital.save()
         messages.success(request, f"Edital '{edital.titulo}' atualizado com sucesso!")
         return redirect('dashboard')
@@ -298,6 +310,22 @@ def exportar_excel_view(request, edital_id):
             filename=excel_filename
         )
     raise Http404("Erro ao gerar a planilha Excel.")
+
+@login_required
+def exportar_docx_view(request, edital_id):
+    edital = get_object_or_404(Edital, id=edital_id)
+    docx_filename = f"Oficio_Selecao_Estagios_FAMED_{edital.semestre}.docx"
+    docx_path = os.path.join(settings.BASE_DIR, docx_filename)
+    
+    gerar_oficio_word_edital(edital, docx_path)
+    
+    if os.path.exists(docx_path):
+        return FileResponse(
+            open(docx_path, 'rb'),
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            filename=docx_filename
+        )
+    raise Http404("Erro ao gerar o Ofício em Word (.docx).")
 
 
 # =============================================================================

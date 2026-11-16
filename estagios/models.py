@@ -18,7 +18,8 @@ class Edital(models.Model):
     
     # Parâmetros de Seleção
     percentual_cotas = models.FloatField(default=0.5, verbose_name="Percentual de Cotas (0.0 a 1.0)")
-    percentual_mulheres = models.FloatField(default=0.5, verbose_name="Mínimo de Mulheres (0.0 a 1.0)")
+    percentual_mulheres = models.FloatField(default=0.0, verbose_name="Mínimo de Mulheres (0.0 a 1.0)")
+    aplicar_genero = models.BooleanField(default=False, verbose_name="Aplicar Ação Afirmativa de Gênero (50% mulheres)")
     
     # Arquivos
     arquivo_vagas = models.FileField(upload_to='editais/vagas/', null=True, blank=True, verbose_name="Planilha dos Professores (Vagas)")
@@ -31,6 +32,10 @@ class Edital(models.Model):
 
     def __str__(self):
         return f"{self.titulo} ({self.semestre})"
+
+    def save(self, *args, **kwargs):
+        self.aplicar_genero = (float(self.percentual_mulheres or 0.0) > 0.0)
+        super().save(*args, **kwargs)
 
     @property
     def total_vagas(self):
@@ -53,6 +58,7 @@ class Oportunidade(models.Model):
     periodo = models.CharField(max_length=255, verbose_name="Período e Horários")
     vagas_totais = models.IntegerField(default=1, verbose_name="Total de Vagas")
     ciclos_permitidos = models.CharField(max_length=255, default="basico,clinico,internato", verbose_name="Ciclos Permitidos")
+    semestres_permitidos = models.CharField(max_length=255, blank=True, default="", verbose_name="Semestres Permitidos")
     vagas_preenchidas = models.IntegerField(default=0)
 
     class Meta:

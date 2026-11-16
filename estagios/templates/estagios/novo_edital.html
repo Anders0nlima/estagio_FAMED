@@ -74,15 +74,14 @@
                         Reserva de Vagas para Cotas (%)
                     </label>
                     <div class="relative custom-dropdown-container">
-                        <input type="hidden" name="percentual_cotas" id="input-percentual-cotas" value="{{ edital.percentual_cotas|default:'0.5' }}">
+                        <input type="hidden" name="percentual_cotas" id="input-percentual-cotas" value="{% if edital and edital.percentual_cotas == 0.0 %}0.0{% else %}0.5{% endif %}">
                         <button 
                             type="button" 
                             onclick="toggleFormDropdown('menu-cotas', event)"
                             class="w-full flex items-center justify-between px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-sm rounded-lg border border-slate-300 shadow-2xs transition focus:outline-none focus:ring-2 focus:ring-[#086419] cursor-pointer"
                         >
                             <span id="label-cotas">
-                                {% if edital.percentual_cotas == 0.2 %}20% Cotas
-                                {% elif edital.percentual_cotas == 0.0 %}Sem Cotas (100% Ampla Concorrência)
+                                {% if edital.percentual_cotas == 0.0 %}Sem Cotas (100% Ampla Concorrência)
                                 {% else %}50% Cotas (Padrão Federal Lei 12.711){% endif %}
                             </span>
                             <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -98,16 +97,13 @@
                                 <button type="button" onclick="selectOption('cotas', '0.5', '50% Cotas (Padrão Federal Lei 12.711)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
                                     <span>50% Cotas (Padrão Federal Lei 12.711)</span>
                                 </button>
-                                <button type="button" onclick="selectOption('cotas', '0.2', '20% Cotas')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
-                                    <span>20% Cotas</span>
-                                </button>
                                 <button type="button" onclick="selectOption('cotas', '0.0', 'Sem Cotas (100% Ampla Concorrência)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
                                     <span>Sem Cotas (100% Ampla Concorrência)</span>
                                 </button>
                             </div>
                         </div>
                     </div>
-                    <span class="text-[11px] text-slate-400 mt-1 block">Cotistas com nota suficiente entram na Ampla sem gastar a cota reservada.</span>
+                    <span class="text-[11px] text-slate-400 mt-1 block">Quando o total de vagas for ímpar, a vaga excedente é destinada aos cotistas.</span>
                 </div>
 
                 <!-- Dropdown 2: Mulheres (Padronizado) -->
@@ -116,16 +112,14 @@
                         Cota Mínima de Mulheres (%)
                     </label>
                     <div class="relative custom-dropdown-container">
-                        <input type="hidden" name="percentual_mulheres" id="input-percentual-mulheres" value="{{ edital.percentual_mulheres|default:'0.5' }}">
+                        <input type="hidden" name="percentual_mulheres" id="input-percentual-mulheres" value="{% if edital and edital.percentual_mulheres == 0.5 %}0.5{% else %}0.0{% endif %}">
                         <button 
                             type="button" 
                             onclick="toggleFormDropdown('menu-mulheres', event)"
                             class="w-full flex items-center justify-between px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-sm rounded-lg border border-slate-300 shadow-2xs transition focus:outline-none focus:ring-2 focus:ring-[#086419] cursor-pointer"
                         >
                             <span id="label-mulheres">
-                                {% if edital.percentual_mulheres == 0.4 %}40% Mulheres
-                                {% elif edital.percentual_mulheres == 0.0 %}Sem cota de gênero
-                                {% else %}50% Mulheres (AC e Cotas){% endif %}
+                                {% if edital.percentual_mulheres == 0.5 %}50% Mulheres (AC e Cotas){% else %}Sem cota de gênero{% endif %}
                             </span>
                             <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -137,30 +131,28 @@
                             class="hidden absolute left-0 right-0 z-50 mt-1 origin-top rounded-xl bg-white shadow-xl ring-1 ring-black/5 border border-slate-200 p-1.5 focus:outline-none text-left"
                         >
                             <div class="space-y-0.5">
-                                <button type="button" onclick="selectOption('mulheres', '0.5', '50% Mulheres (AC e Cotas)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
-                                    <span>50% Mulheres (AC e Cotas)</span>
-                                </button>
-                                <button type="button" onclick="selectOption('mulheres', '0.4', '40% Mulheres')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
-                                    <span>40% Mulheres</span>
-                                </button>
                                 <button type="button" onclick="selectOption('mulheres', '0.0', 'Sem cota de gênero')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
                                     <span>Sem cota de gênero</span>
+                                </button>
+                                <button type="button" onclick="selectOption('mulheres', '0.5', '50% Mulheres (AC e Cotas)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>50% Mulheres (AC e Cotas)</span>
                                 </button>
                             </div>
                         </div>
                     </div>
-                    <span class="text-[11px] text-slate-400 mt-1 block">Caso não atinja 50%, permuta o homem de menor CRG pela mulher de maior CRG.</span>
+                    <span class="text-[11px] text-slate-400 mt-1 block">Padrão FAMED 2027: seleção meritocrática sem cota de gênero (ou 50% afirmativa se desejado).</span>
                 </div>
 
-                <!-- Regras Fixas Homologadas (Corrigido o \to e Estilo FAMED) -->
+                <!-- Regras Fixas Homologadas (Padrão Oficial FAMED) -->
                 <div class="sm:col-span-2 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200/80 text-xs text-slate-700 space-y-2">
                     <div class="font-bold text-[#086419] flex items-center space-x-1.5">
-                        <span>Regras Fixas Homologadas pelo Edital:</span>
+                        <span>Regras Homologadas do Processo Seletivo:</span>
                     </div>
                     <ul class="list-disc list-inside space-y-1 text-slate-600">
-                        <li><b>Divisão por Ciclos:</b> Ciclo Básico (1º ao 4º sem), Ciclo Clínico (5º ao 8º sem), Internato (9º ao 12º sem).</li>
+                        <li><b>Distribuição das Vagas:</b> Vagas divididas entre Ampla Concorrência e Cotistas (PSEI, PSEQ e Cotas Sociais/Raciais). Quando ímpar, a vaga excedente é destinada aos cotistas (com reversão mútua se não houver inscritos suficientes).</li>
+                        <li><b>Filtro de Requisitos por Semestre:</b> O sistema valida os semestres permitidos para cada oportunidade, desconsiderando inscrições incompatíveis.</li>
                         <li><b>Critérios Estritos de Desempate:</b> 1º Maior CRG → 2º Maior Idade (data de nascimento mais antiga) → 3º Timestamp de Inscrição.</li>
-                        <li><b>Remanejamento de Opções:</b> 1ª Opção processada primeiro; vagas remanescentes alocadas aos candidatos de 2ª Opção.</li>
+                        <li><b>Remanejamento em 2 Etapas:</b> 1ª Opção processada primeiro; vagas não preenchidas são disponibilizadas aos candidatos de 2ª Opção.</li>
                     </ul>
                 </div>
             </div>

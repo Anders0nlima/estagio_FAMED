@@ -15,13 +15,40 @@
         </div>
 
         <!-- Botões de Exportação e Módulo Pós-Estágio -->
-        <div class="flex items-center space-x-3">
-            <a href="{% url 'exportar_excel' edital.id %}" class="bg-white hover:bg-slate-50 text-slate-700 font-semibold px-4 py-2.5 rounded-xl border border-slate-300 shadow-sm transition flex items-center space-x-2 text-xs">
-                <span>Exportar Planilha (Excel)</span>
-            </a>
-            <a href="{% url 'exportar_pdf' edital.id %}" class="bg-slate-800 hover:bg-slate-900 text-white font-semibold px-4 py-2.5 rounded-xl shadow-md transition flex items-center space-x-2 text-xs">
-                <span>Ofício Oficial (PDF)</span>
-            </a>
+        <div class="flex items-center space-x-2.5">
+            <!-- Dropdown de Exportações Oficiais -->
+            <div class="relative custom-dropdown-container">
+                <button 
+                    type="button" 
+                    onclick="toggleResultadoDropdown(event)"
+                    class="bg-white hover:bg-slate-50 text-slate-700 font-semibold px-3.5 py-2.5 rounded-xl border border-slate-300 shadow-2xs transition flex items-center space-x-2 text-xs cursor-pointer"
+                >
+                    <svg class="w-4 h-4 text-slate-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/>
+                    </svg>
+                    <span>Exportações Oficiais ▾</span>
+                </button>
+                <div id="menu-exportacoes" class="hidden absolute right-0 mt-1.5 w-60 rounded-xl bg-white shadow-xl border border-slate-200 p-1.5 z-50 text-left">
+                    <a href="{% url 'exportar_docx' edital.id %}" class="flex items-center px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors">
+                        <svg class="w-4 h-4 mr-2.5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <span>Ofício Oficial Word (.docx)</span>
+                    </a>
+                    <a href="{% url 'exportar_pdf' edital.id %}" class="flex items-center px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors">
+                        <svg class="w-4 h-4 mr-2.5 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"></path>
+                        </svg>
+                        <span>Ofício Oficial PDF</span>
+                    </a>
+                    <a href="{% url 'exportar_excel' edital.id %}" class="flex items-center px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 rounded-lg transition-colors">
+                        <svg class="w-4 h-4 mr-2.5 text-emerald-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                        </svg>
+                        <span>Planilha de Auditoria (.xlsx)</span>
+                    </a>
+                </div>
+            </div>
             <a href="{% url 'frequencia_certificados' edital.id %}" class="bg-[#086419] hover:bg-[#00420c] text-white font-bold px-4 py-2.5 rounded-xl shadow-md transition flex items-center space-x-1.5 text-xs">
                 <span>Frequência & Certificados</span>
                 <span>→</span>
@@ -47,9 +74,14 @@
         </div>
 
         <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
-            <span class="text-[11px] uppercase tracking-wider text-pink-600 font-bold block">Presença Feminina</span>
+            <div class="flex items-center justify-between">
+                <span class="text-[11px] uppercase tracking-wider text-pink-600 font-bold block">Presença Feminina</span>
+                {% if not edital.aplicar_genero %}
+                <span class="text-[9px] font-bold text-slate-400 bg-slate-100 px-1.5 py-0.5 rounded">Desativado</span>
+                {% endif %}
+            </div>
             <span class="text-xl font-bold text-pink-700">{{ pct_mulheres }}%</span>
-            <span class="text-[10px] text-slate-400 block">({{ mulheres_alocadas }} alunas)</span>
+            <span class="text-[10px] text-slate-400 block">({{ mulheres_alocadas }} alunas{% if not edital.aplicar_genero %} • informativo{% endif %})</span>
         </div>
 
         <div class="bg-white rounded-xl p-4 border border-slate-200 shadow-sm">
@@ -211,6 +243,21 @@
 </div>
 
 <script>
+function toggleResultadoDropdown(event) {
+    event.stopPropagation();
+    const menu = document.getElementById('menu-exportacoes');
+    if (menu) {
+        menu.classList.toggle('hidden');
+    }
+}
+
+window.addEventListener('click', function(e) {
+    const menu = document.getElementById('menu-exportacoes');
+    if (menu && !menu.classList.contains('hidden') && !e.target.closest('.custom-dropdown-container')) {
+        menu.classList.add('hidden');
+    }
+});
+
 function mostrarAba(nome) {
     document.getElementById('aba-aprovados').classList.add('hidden');
     document.getElementById('aba-reserva').classList.add('hidden');

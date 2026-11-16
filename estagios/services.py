@@ -44,6 +44,7 @@ from classificador import (
     parse_birth_date,
     guess_gender,
     determine_cycle,
+    parse_semestres_permitidos,
     OPORTUNIDADES_CANONICAS,
     allocate_opportunity,
     sort_candidates,
@@ -66,6 +67,10 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
 
     vagas_map = {}
     for op in OPORTUNIDADES_CANONICAS:
+        sems = op.get('semestres_permitidos')
+        if not sems:
+            sems = parse_semestres_permitidos(",".join(op['ciclos_permitidos']))
+        sems_str = ",".join(str(x) for x in sems)
         obj = Oportunidade.objects.create(
             edital=edital,
             codigo_opcao=op['id'],
@@ -75,6 +80,7 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
             periodo=op['periodo'],
             vagas_totais=op['vagas_total'],
             ciclos_permitidos=",".join(op['ciclos_permitidos']),
+            semestres_permitidos=sems_str,
         )
         vagas_map[op['id']] = obj
 
@@ -84,7 +90,7 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         csv_path = 'forma_ingresso.csv'
 
     PALAVRAS_COTA = ['COTA', 'GRUPO', 'PPI', 'RENDA', 'PCD', 'QUILOMBOLA', 'INDÍGENA', 'INDIGENA',
-                     'ESCOLA PUBLICA', 'ESCOLA PÚBLICA', 'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14']
+                     'PSEI', 'PSEQ', 'ESCOLA PUBLICA', 'ESCOLA PÚBLICA', 'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14']
 
     if os.path.exists(csv_path):
         for sep in [';', ',', '\t']:
@@ -296,8 +302,13 @@ def confirmar_todas_pendencias(edital: Edital) -> int:
 def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
     """Executa a classificação oficial dos candidatos em 2 rodadas com cotas e 50% mulheres."""
     opp_dict = {}
+    pct_mulheres = edital.percentual_mulheres if edital.aplicar_genero else 0.0
+
     for op in edital.oportunidades.all():
         ciclos_list = [c.strip() for c in op.ciclos_permitidos.split(',') if c.strip()]
+        sems_list = [int(s.strip()) for s in op.semestres_permitidos.split(',') if s.strip().isdigit()]
+        if not sems_list:
+            sems_list = parse_semestres_permitidos(",".join(ciclos_list))
         opp_dict[op.codigo_opcao] = Opportunity(
             id=op.codigo_opcao,
             professor=op.professor,
@@ -306,8 +317,9 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
             periodo=op.periodo,
             vagas_total=op.vagas_totais,
             ciclos_permitidos=ciclos_list,
+            semestres_permitidos=sems_list,
             percentual_cotas=edital.percentual_cotas,
-            percentual_mulheres=edital.percentual_mulheres,
+            percentual_mulheres=pct_mulheres,
         )
 
     students_list = []
@@ -340,17 +352,24 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
     audit_logs = []
     audit_logs.append("================================================================================")
     audit_logs.append(f"EXECUÇÃO DO MOTOR DE CLASSIFICAÇÃO: {edital.titulo} ({edital.semestre})")
+    audit_logs.append(f"Ação Afirmativa de Gênero: {'ATIVADA' if edital.aplicar_genero else 'DESATIVADA'}")
     audit_logs.append("================================================================================")
 
     # --- RODADA 1: 1ª OPÇÃO ---
     audit_logs.append("\n>>> RODADA 1: ALOCAÇÃO EM 1ª OPÇÃO <<<")
     for opp_id, opp in opp_dict.items():
         candidatos_op1 = [s for s in students_list if not s.alocado and s.op1 == opp_id]
-        elegiveis = [s for s in candidatos_op1 if s.ciclo in opp.ciclos_permitidos]
-        descartados = [s for s in candidatos_op1 if s.ciclo not in opp.ciclos_permitidos]
-
-        for d in descartados:
-            audit_logs.append(f"[Ciclo Incompatível na 1ª Opção] {d.nome} (Ciclo {d.ciclo}) não atende à Opção {opp.id}.")
+        
+        if opp.semestres_permitidos:
+            elegiveis = [s for s in candidatos_op1 if s.semestre_atual in opp.semestres_permitidos]
+            descartados = [s for s in candidatos_op1 if s.semestre_atual not in opp.semestres_permitidos]
+            for d in descartados:
+                audit_logs.append(f"[Semestre Incompatível na 1ª Opção] {d.nome} ({d.semestre_atual}º semestre) não atende aos requisitos da Opção {opp.id} (Semestres: {opp.semestres_permitidos}).")
+        else:
+            elegiveis = [s for s in candidatos_op1 if s.ciclo in opp.ciclos_permitidos]
+            descartados = [s for s in candidatos_op1 if s.ciclo not in opp.ciclos_permitidos]
+            for d in descartados:
+                audit_logs.append(f"[Ciclo Incompatível na 1ª Opção] {d.nome} (Ciclo {d.ciclo}) não atende à Opção {opp.id}.")
 
         selecionados, espera, logs = allocate_opportunity(
             opp=opp,
@@ -372,7 +391,14 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
             continue
 
         candidatos_op2 = [s for s in students_list if not s.alocado and (opp_id in s.op2_list)]
-        elegiveis = [s for s in candidatos_op2 if s.ciclo in opp.ciclos_permitidos]
+        
+        if opp.semestres_permitidos:
+            elegiveis = [s for s in candidatos_op2 if s.semestre_atual in opp.semestres_permitidos]
+            descartados = [s for s in candidatos_op2 if s.semestre_atual not in opp.semestres_permitidos]
+            for d in descartados:
+                audit_logs.append(f"[Semestre Incompatível na 2ª Opção] {d.nome} ({d.semestre_atual}º semestre) não atende à Opção {opp.id}.")
+        else:
+            elegiveis = [s for s in candidatos_op2 if s.ciclo in opp.ciclos_permitidos]
 
         if elegiveis:
             novos_sel, nova_esp, logs = allocate_opportunity(
@@ -746,14 +772,19 @@ def gerar_certificado_individual_pdf(resultado: Resultado, output_path: str) -> 
     story = []
 
     # Cabeçalho com Logos
-    brasao_path = "ufpa_brasao.png"
+    brasao_candidates = [
+        os.path.join(settings.BASE_DIR, "Brasao-UFPA-colorido.png"),
+        os.path.join(settings.BASE_DIR, "estagios/static/img/Brasao-UFPA-colorido.png"),
+        "Brasao-UFPA-colorido.png",
+        "ufpa_brasao.png",
+        os.path.join(settings.BASE_DIR, "estagios/static/img/ufpa_brasao.png"),
+    ]
+    brasao_path = next((p for p in brasao_candidates if os.path.exists(p)), None)
     logo_path = "Logo Estagio de Ferias FAMED.png"
-    if not os.path.exists(brasao_path):
-        brasao_path = os.path.join(settings.BASE_DIR, "estagios/static/img/ufpa_brasao.png")
     if not os.path.exists(logo_path):
         logo_path = os.path.join(settings.BASE_DIR, "estagios/static/img/logo_famed.png")
 
-    img_brasao = Image(brasao_path, width=1.4 * cm, height=1.8 * cm) if os.path.exists(brasao_path) else Paragraph("", style_gov)
+    img_brasao = Image(brasao_path, width=1.4 * cm, height=2.0 * cm) if brasao_path else Paragraph("", style_gov)
     img_logo = Image(logo_path, width=1.8 * cm, height=1.8 * cm) if os.path.exists(logo_path) else Paragraph("", style_gov)
 
     header_table = Table([
@@ -885,14 +916,19 @@ def gerar_folha_frequencia_individual_pdf(resultado: Resultado, output_path: str
     story = []
 
     # Logos e Cabeçalho Oficial
-    brasao_path = "ufpa_brasao.png"
+    brasao_candidates = [
+        os.path.join(settings.BASE_DIR, "Brasao-UFPA-colorido.png"),
+        os.path.join(settings.BASE_DIR, "estagios/static/img/Brasao-UFPA-colorido.png"),
+        "Brasao-UFPA-colorido.png",
+        "ufpa_brasao.png",
+        os.path.join(settings.BASE_DIR, "estagios/static/img/ufpa_brasao.png"),
+    ]
+    brasao_path = next((p for p in brasao_candidates if os.path.exists(p)), None)
     logo_path = "Logo Estagio de Ferias FAMED.png"
-    if not os.path.exists(brasao_path):
-        brasao_path = os.path.join(settings.BASE_DIR, "estagios/static/img/ufpa_brasao.png")
     if not os.path.exists(logo_path):
         logo_path = os.path.join(settings.BASE_DIR, "estagios/static/img/logo_famed.png")
 
-    img_b = Image(brasao_path, width=1.3 * cm, height=1.6 * cm) if os.path.exists(brasao_path) else Paragraph("", style_head)
+    img_b = Image(brasao_path, width=1.3 * cm, height=1.85 * cm) if brasao_path else Paragraph("", style_head)
     img_l = Image(logo_path, width=1.6 * cm, height=1.6 * cm) if os.path.exists(logo_path) else Paragraph("", style_head)
 
     header_table = Table([
@@ -1219,3 +1255,303 @@ def gerar_excel_resultado_edital(edital: Edital, output_path: str) -> str:
         pd.DataFrame(rows_logs).to_excel(writer, sheet_name='Log de Auditoria', index=False)
 
     return output_path
+
+def gerar_oficio_word_edital(edital: Edital, output_path: str) -> str:
+    """
+    Gera o Ofício Oficial de Encaminhamento em formato Word (.docx)
+    para a GEP/HUJBB, com cabeçalho institucional, brasão, texto formal e
+    tabelas de alunos selecionados por oportunidade (omitindo as que não tiveram aprovados).
+    """
+    import docx
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    doc = docx.Document()
+    
+    # Configuração de Margens (2 cm em toda a volta)
+    for section in doc.sections:
+        section.top_margin = Inches(0.8)
+        section.bottom_margin = Inches(0.8)
+        section.left_margin = Inches(0.8)
+        section.right_margin = Inches(0.8)
+
+    # 1. Brasão da República / UFPA
+    brasao_paths = [
+        os.path.join(settings.BASE_DIR, 'Brasao-UFPA-colorido.png'),
+        os.path.join(settings.BASE_DIR, 'estagios', 'static', 'img', 'Brasao-UFPA-colorido.png'),
+        os.path.join(settings.BASE_DIR, 'ufpa_brasao.png'),
+        os.path.join(settings.BASE_DIR, 'estagios', 'static', 'img', 'ufpa_brasao.png'),
+    ]
+    for bp in brasao_paths:
+        if os.path.exists(bp):
+            p_img = doc.add_paragraph()
+            p_img.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            run_img = p_img.add_run()
+            run_img.add_picture(bp, width=Inches(0.85))
+            break
+
+    # 2. Cabeçalho Governamental
+    p_head = doc.add_paragraph()
+    p_head.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_head.paragraph_format.space_before = Pt(4)
+    p_head.paragraph_format.space_after = Pt(2)
+    p_head.paragraph_format.line_spacing = 1.15
+    
+    r1 = p_head.add_run("MINISTÉRIO DA EDUCAÇÃO\n")
+    r1.bold = True
+    r1.font.size = Pt(10)
+    r1.font.name = "Calibri"
+    
+    r2 = p_head.add_run("UNIVERSIDADE FEDERAL DO PARÁ\n")
+    r2.bold = True
+    r2.font.size = Pt(10)
+    r2.font.name = "Calibri"
+    
+    r3 = p_head.add_run("INSTITUTO DE CIÊNCIAS MÉDICAS\nFACULDADE DE MEDICINA - FAMED")
+    r3.bold = True
+    r3.font.size = Pt(9.5)
+    r3.font.name = "Calibri"
+    r3.font.color.rgb = RGBColor(45, 55, 72)
+
+    # Linha divisória
+    p_hr = doc.add_paragraph()
+    p_hr.paragraph_format.space_before = Pt(4)
+    p_hr.paragraph_format.space_after = Pt(12)
+    p_hr_border = parse_xml(f'<w:pBdr {nsdecls("w")}><w:bottom w:val="single" w:sz="6" w:space="1" w:color="086419"/></w:pBdr>')
+    p_hr._p.get_or_add_pPr().append(p_hr_border)
+
+    # 3. Metadados do Ofício
+    hoje = datetime.date.today()
+    meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+             'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+    data_formatada = f"{hoje.day:02d} de {meses[hoje.month - 1]} de {hoje.year}"
+
+    p_meta = doc.add_paragraph()
+    p_meta.paragraph_format.space_before = Pt(4)
+    p_meta.paragraph_format.space_after = Pt(4)
+    p_meta.paragraph_format.line_spacing = 1.15
+    
+    rm1 = p_meta.add_run(f"OFÍCIO Nº {edital.numero_oficio} - FAMED/ICM (11.85.04)\n")
+    rm1.bold = True
+    rm1.font.size = Pt(9.5)
+    rm1.font.name = "Calibri"
+
+    rm2 = p_meta.add_run(f"Nº do Protocolo SIPAC: {edital.protocolo}\n")
+    rm2.font.size = Pt(9)
+    rm2.font.name = "Calibri"
+    rm2.font.color.rgb = RGBColor(74, 85, 104)
+
+    rm3 = p_meta.add_run(f"Belém-PA, {data_formatada}.")
+    rm3.font.size = Pt(9)
+    rm3.font.name = "Calibri"
+
+    # Destinatário e Assunto
+    p_dest = doc.add_paragraph()
+    p_dest.paragraph_format.space_before = Pt(10)
+    p_dest.paragraph_format.space_after = Pt(10)
+    
+    rd1 = p_dest.add_run("À Gerência de Ensino e Pesquisa do HUJBB (GEP/HUJBB/EBSERH)\n")
+    rd1.bold = True
+    rd1.font.size = Pt(10)
+    rd1.font.name = "Calibri"
+    
+    rd2 = p_dest.add_run(f"Assunto: Estágio de Férias FAMED - {edital.titulo} ({edital.semestre})")
+    rd2.bold = True
+    rd2.font.size = Pt(10)
+    rd2.font.name = "Calibri"
+    rd2.font.color.rgb = RGBColor(8, 100, 25)
+
+    # Oportunidades com selecionados
+    ops_com_alunos = edital.oportunidades.filter(alocados__status='APROVADO').distinct().order_by('id')
+    profs_ativos = sorted(list(set(op.professor for op in ops_com_alunos)))
+    profs_str = ", ".join(profs_ativos) if profs_ativos else "Docentes da Faculdade de Medicina"
+
+    # Corpo do Ofício
+    p_corpo1 = doc.add_paragraph()
+    p_corpo1.paragraph_format.space_before = Pt(6)
+    p_corpo1.paragraph_format.space_after = Pt(6)
+    p_corpo1.paragraph_format.line_spacing = 1.25
+    p_corpo1.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    rc1 = p_corpo1.add_run(
+        "Prezados(as), encaminhamos anexo a este documento a listagem oficial com os nomes dos estudantes "
+        "da Faculdade de Medicina da Universidade Federal do Pará (FAMED/UFPA) devidamente selecionados "
+        "para as vagas de estágio de férias com nossos docentes no Hospital Universitário João de Barros "
+        "Barreto (HUJBB) e unidades de saúde conveniadas."
+    )
+    rc1.font.size = Pt(10)
+    rc1.font.name = "Calibri"
+
+    p_corpo2 = doc.add_paragraph()
+    p_corpo2.paragraph_format.space_before = Pt(6)
+    p_corpo2.paragraph_format.space_after = Pt(6)
+    p_corpo2.paragraph_format.line_spacing = 1.25
+    p_corpo2.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    rc2_1 = p_corpo2.add_run("Nesta edição, os docentes que ofertaram vagas com estudantes alocados foram: ")
+    rc2_1.font.size = Pt(10)
+    rc2_1.font.name = "Calibri"
+    rc2_2 = p_corpo2.add_run(profs_str + ".")
+    rc2_2.bold = True
+    rc2_2.font.size = Pt(10)
+    rc2_2.font.name = "Calibri"
+
+    p_corpo3 = doc.add_paragraph()
+    p_corpo3.paragraph_format.space_before = Pt(6)
+    p_corpo3.paragraph_format.space_after = Pt(14)
+    p_corpo3.paragraph_format.line_spacing = 1.25
+    p_corpo3.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    rc3 = p_corpo3.add_run(
+        "As informações detalhadas sobre horários, locais, períodos e contatos de cada grupo de alunos "
+        "encontram-se no anexo a este documento. Orientamos os estudantes a se dirigirem à GEP-HUJBB "
+        "para as providências administrativas e início tempestivo das atividades."
+    )
+    rc3.font.size = Pt(10)
+    rc3.font.name = "Calibri"
+
+    # Assinatura
+    p_sig = doc.add_paragraph()
+    p_sig.paragraph_format.space_before = Pt(12)
+    p_sig.paragraph_format.space_after = Pt(2)
+    p_sig.paragraph_format.line_spacing = 1.15
+    
+    rs1 = p_sig.add_run("Atenciosamente,\n\n")
+    rs1.font.size = Pt(10)
+    rs1.font.name = "Calibri"
+
+    rs2 = p_sig.add_run("(Assinado digitalmente)\n")
+    rs2.bold = True
+    rs2.font.size = Pt(9.5)
+    rs2.font.name = "Calibri"
+
+    rs3 = p_sig.add_run("DIREÇÃO DA FACULDADE DE MEDICINA\nPROFESSOR DO MAGISTÉRIO SUPERIOR\nFAMED / ICM - UFPA\nMatrícula SIAPE: ###720#2")
+    rs3.font.size = Pt(9)
+    rs3.font.name = "Calibri"
+    rs3.font.color.rgb = RGBColor(74, 85, 104)
+
+    # Box de autenticidade SIPAC
+    p_auth = doc.add_paragraph()
+    p_auth.paragraph_format.space_before = Pt(16)
+    p_auth.paragraph_format.space_after = Pt(4)
+    ra = p_auth.add_run(
+        f"Documento oficial autenticado eletronicamente. Para verificar a autenticidade, acesse o portal SIPAC-UFPA "
+        f"informando o Ofício nº {edital.numero_oficio}, protocolo {edital.protocolo} e data de emissão: {data_formatada}."
+    )
+    ra.font.size = Pt(8)
+    ra.font.italic = True
+    ra.font.name = "Calibri"
+    ra.font.color.rgb = RGBColor(113, 128, 150)
+
+    # =========================================================================
+    # PÁGINA 2: ANEXO COM OS ALUNOS APROVADOS (OMITE OPORTUNIDADES SEM ALUNOS)
+    # =========================================================================
+    doc.add_page_break()
+
+    p_anexo_title = doc.add_paragraph()
+    p_anexo_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_anexo_title.paragraph_format.space_before = Pt(6)
+    p_anexo_title.paragraph_format.space_after = Pt(14)
+    rat = p_anexo_title.add_run(f"ANEXO I - ALUNOS SELECIONADOS PARA ESTÁGIO DE FÉRIAS DA FAMED\n{edital.titulo} ({edital.semestre})")
+    rat.bold = True
+    rat.font.size = Pt(12)
+    rat.font.name = "Calibri"
+    rat.font.color.rgb = RGBColor(8, 100, 25)
+
+    item_idx = 1
+    for op in ops_com_alunos:
+        alocados = op.alocados.filter(status='APROVADO').select_related('candidato').order_by('posicao')
+        if not alocados.exists():
+            continue
+
+        # Título da oportunidade
+        p_op = doc.add_paragraph()
+        p_op.paragraph_format.space_before = Pt(10)
+        p_op.paragraph_format.space_after = Pt(4)
+        rop_title = p_op.add_run(f"{item_idx}) Seguem abaixo os selecionados para {op.local}")
+        rop_title.bold = True
+        rop_title.font.size = Pt(10.5)
+        rop_title.font.name = "Calibri"
+        rop_title.font.color.rgb = RGBColor(8, 100, 25)
+
+        # Informações da vaga
+        p_op_info = doc.add_paragraph()
+        p_op_info.paragraph_format.space_before = Pt(0)
+        p_op_info.paragraph_format.space_after = Pt(4)
+        p_op_info.paragraph_format.line_spacing = 1.15
+        
+        ri1 = p_op_info.add_run(f"Docente Responsável: {op.professor} | Vagas Ofertadas: {op.vagas_totais}\n")
+        ri1.bold = True
+        ri1.font.size = Pt(9)
+        ri1.font.name = "Calibri"
+
+        ri2 = p_op_info.add_run(f"Atividade: {op.atividade or 'Atividades clínicas supervisionadas'} | Período/Horário: {op.periodo}")
+        ri2.font.size = Pt(8.5)
+        ri2.font.name = "Calibri"
+        ri2.font.color.rgb = RGBColor(74, 85, 104)
+
+        # Tabela Word
+        table = doc.add_table(rows=1, cols=4)
+        table.alignment = WD_TABLE_ALIGNMENT.CENTER
+        table.autofit = False
+
+        col_widths = [Inches(2.5), Inches(1.2), Inches(2.2), Inches(1.3)]
+        
+        # Cabeçalho da Tabela
+        hdr_cells = table.rows[0].cells
+        headers = ["Nome Completo", "Matrícula", "E-mail Institucional", "Contato"]
+        for c_idx, text in enumerate(headers):
+            cell = hdr_cells[c_idx]
+            cell.width = col_widths[c_idx]
+            p_cell = cell.paragraphs[0]
+            p_cell.paragraph_format.space_before = Pt(3)
+            p_cell.paragraph_format.space_after = Pt(3)
+            r_c = p_cell.add_run(text)
+            r_c.bold = True
+            r_c.font.size = Pt(8.5)
+            r_c.font.name = "Calibri"
+            r_c.font.color.rgb = RGBColor(255, 255, 255)
+            shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="086419"/>')
+            cell._tc.get_or_add_tcPr().append(shd)
+
+        # Linhas de Alunos
+        for r_idx, res in enumerate(alocados):
+            row_cells = table.add_row().cells
+            c = res.candidato
+            dados = [
+                c.nome,
+                c.matricula,
+                c.email,
+                c.telefone or '-'
+            ]
+            bg_color = "F8FAFC" if (r_idx % 2 == 1) else "FFFFFF"
+            for c_idx, val in enumerate(dados):
+                cell = row_cells[c_idx]
+                cell.width = col_widths[c_idx]
+                p_c = cell.paragraphs[0]
+                p_c.paragraph_format.space_before = Pt(2.5)
+                p_c.paragraph_format.space_after = Pt(2.5)
+                run_v = p_c.add_run(val)
+                run_v.font.size = Pt(8.5)
+                run_v.font.name = "Calibri"
+                shd = parse_xml(f'<w:shd {nsdecls("w")} w:fill="{bg_color}"/>')
+                cell._tc.get_or_add_tcPr().append(shd)
+
+        # Orientações sob a tabela
+        p_orient = doc.add_paragraph()
+        p_orient.paragraph_format.space_before = Pt(3)
+        p_orient.paragraph_format.space_after = Pt(8)
+        ro = p_orient.add_run(
+            f"Instruções: Os estudantes selecionados deverão apresentar-se ao(à) Prof.(a) {op.professor} "
+            f"no local e horário informados munidos do comprovante de matrícula."
+        )
+        ro.font.size = Pt(8)
+        ro.font.italic = True
+        ro.font.name = "Calibri"
+        ro.font.color.rgb = RGBColor(113, 128, 150)
+
+        item_idx += 1
+
+    doc.save(output_path)
+    return output_path
+

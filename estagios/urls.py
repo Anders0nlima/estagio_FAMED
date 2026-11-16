@@ -15,6 +15,7 @@ urlpatterns = [
     path('edital/<int:edital_id>/classificar/', views.processar_classificacao_view, name='processar_classificacao'),
     path('edital/<int:edital_id>/resultado/', views.resultado_final_view, name='resultado_final'),
     path('edital/<int:edital_id>/exportar/pdf/', views.exportar_pdf_view, name='exportar_pdf'),
+    path('edital/<int:edital_id>/exportar/docx/', views.exportar_docx_view, name='exportar_docx'),
     path('edital/<int:edital_id>/exportar/excel/', views.exportar_excel_view, name='exportar_excel'),
     # Módulo Pós-Estágio, Frequência e Certificados
     path('edital/<int:edital_id>/pos-estagio/', views.frequencia_certificados_view, name='frequencia_certificados'),

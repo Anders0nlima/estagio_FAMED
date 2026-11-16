@@ -14,6 +14,7 @@ from classificador import (
     parse_option_list,
     guess_gender,
     determine_cycle,
+    parse_semestres_permitidos,
     sort_candidates,
     allocate_opportunity,
     run_classification,
@@ -242,3 +243,105 @@ def test_second_option_round():
     assert len(opps["OP2"].selecionados) == 1
     assert opps["OP2"].selecionados[0].nome == "Estudante Remanejado"
     assert opps["OP2"].selecionados[0].alocado_opcao == 2
+
+def test_parse_semestres_permitidos():
+    """Valida o parser de requisitos de semestre segundo o documento FAMED 2027."""
+    assert parse_semestres_permitidos("Alunos que cursaram do 9º ao 11º semestre em 2026.4.") == [9, 10, 11]
+    assert parse_semestres_permitidos("Alunos que cursaram 7º ou 8º semestre em 2026.4.") == [7, 8]
+    assert parse_semestres_permitidos("Alunos que cursaram do 5º ao 8º semestre em 2026.4.") == [5, 6, 7, 8]
+    assert parse_semestres_permitidos("A partir do 7o semestre") == [7, 8, 9, 10, 11, 12]
+    assert parse_semestres_permitidos("clinico") == [5, 6, 7, 8]
+    assert parse_semestres_permitidos("internato") == [9, 10, 11, 12]
+    assert parse_semestres_permitidos("basico") == [1, 2, 3, 4]
+    assert parse_semestres_permitidos("9,10,11") == [9, 10, 11]
+
+def test_cotas_vaga_impar_para_cotista():
+    """
+    Diretriz FAMED 2027:
+    Quando o número de vagas for ímpar, a vaga excedente será destinada aos cotistas.
+    Vagas disponíveis: 1 -> 1 cota.
+    Vagas disponíveis: 3 -> 2 cotas, 1 ampla.
+    """
+    c_cotista = Student(
+        matricula="101", nome="Aluno Cotista", email="", telefone="", crg=8.0, op1="OP1", op2_list=[],
+        timestamp=datetime.datetime.now(), genero="M", is_cotista=True, forma_ingresso="Cota",
+        ano_ingresso=2023, semestre_atual=7, ciclo="clinico", data_nascimento=datetime.date(2001, 1, 1)
+    )
+    c_ampla = Student(
+        matricula="102", nome="Aluno Ampla Mais Alto", email="", telefone="", crg=9.5, op1="OP1", op2_list=[],
+        timestamp=datetime.datetime.now(), genero="M", is_cotista=False, forma_ingresso="Ampla",
+        ano_ingresso=2023, semestre_atual=7, ciclo="clinico", data_nascimento=datetime.date(2001, 1, 1)
+    )
+
+    opp_1vaga = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=1,
+        ciclos_permitidos=["clinico"], percentual_cotas=0.5, percentual_mulheres=0.0
+    )
+
+    # 1 vaga ímpar com cotista concorrendo -> vaga vai para o cotista!
+    sel, esp, logs = allocate_opportunity(opp_1vaga, [c_cotista, c_ampla], vagas_disponiveis=1, rodada_nome="1ª Opção")
+    assert len(sel) == 1
+    assert sel[0].nome == "Aluno Cotista"
+    assert sel[0].modalidade == "Cota Reservada"
+
+    # Se NÃO houver cotista, a vaga ímpar reverte para a ampla concorrência!
+    opp_1vaga_sem_cota = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=1,
+        ciclos_permitidos=["clinico"], percentual_cotas=0.5, percentual_mulheres=0.0
+    )
+    sel_rev, esp_rev, logs_rev = allocate_opportunity(opp_1vaga_sem_cota, [c_ampla], vagas_disponiveis=1, rodada_nome="1ª Opção")
+    assert len(sel_rev) == 1
+    assert sel_rev[0].nome == "Aluno Ampla Mais Alto"
+    assert sel_rev[0].modalidade == "Ampla Concorrência"
+
+def test_criterio_genero_desativado():
+    """
+    Quando o critério de gênero está desativado (percentual_mulheres=0.0),
+    não há permutas afirmativas de gênero; prevalece estritamente o CRG.
+    """
+    homem_maior = Student(
+        matricula="201", nome="Carlos Homem Alto", email="", telefone="", crg=9.0, op1="OP1", op2_list=[],
+        timestamp=datetime.datetime.now(), genero="M", is_cotista=False, forma_ingresso="Ampla",
+        ano_ingresso=2023, semestre_atual=7, ciclo="clinico", data_nascimento=datetime.date(2001, 1, 1)
+    )
+    mulher_menor = Student(
+        matricula="202", nome="Mariana Mulher Baixa", email="", telefone="", crg=7.5, op1="OP1", op2_list=[],
+        timestamp=datetime.datetime.now(), genero="F", is_cotista=False, forma_ingresso="Ampla",
+        ano_ingresso=2023, semestre_atual=7, ciclo="clinico", data_nascimento=datetime.date(2001, 1, 1)
+    )
+
+    opp = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=2,
+        ciclos_permitidos=["clinico"], percentual_cotas=0.0, percentual_mulheres=0.0
+    )
+
+    sel, esp, logs = allocate_opportunity(opp, [homem_maior, mulher_menor], vagas_disponiveis=1, rodada_nome="1ª Opção")
+    assert len(sel) == 1
+    assert sel[0].nome == "Carlos Homem Alto"
+
+def test_filtro_semestres_especificos():
+    """
+    Testa o filtro estrito de semestres (ex: 9º ao 11º semestre).
+    Alunos fora do intervalo exigido são descartados com log de auditoria.
+    """
+    s_incompativel = Student(
+        matricula="301", nome="Aluno do 8º Semestre", email="", telefone="", crg=9.8, op1="OP1", op2_list=[],
+        timestamp=datetime.datetime.now(), genero="M", is_cotista=False, forma_ingresso="Ampla",
+        ano_ingresso=2023, semestre_atual=8, ciclo="clinico", data_nascimento=datetime.date(2001, 1, 1)
+    )
+    s_compativel = Student(
+        matricula="302", nome="Aluno do 10º Semestre", email="", telefone="", crg=8.5, op1="OP1", op2_list=[],
+        timestamp=datetime.datetime.now(), genero="M", is_cotista=False, forma_ingresso="Ampla",
+        ano_ingresso=2022, semestre_atual=10, ciclo="internato", data_nascimento=datetime.date(2000, 1, 1)
+    )
+
+    opp = Opportunity(
+        id="OP1", professor="Prof. Nefro", local="HUJBB", atividade="Nefro", periodo="Fev",
+        vagas_total=1, ciclos_permitidos=["internato"], semestres_permitidos=[9, 10, 11]
+    )
+
+    opps, students, logs = run_classification({"OP1": opp}, [s_incompativel, s_compativel])
+    
+    assert len(opp.selecionados) == 1
+    assert opp.selecionados[0].nome == "Aluno do 10º Semestre"
+    assert any("[Semestre Incompatível]" in l for l in logs)
