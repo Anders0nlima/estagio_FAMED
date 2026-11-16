@@ -88,11 +88,9 @@ O sistema já vem configurado com um usuário administrador padrão para a Dire�
 
 | Campo | Valor Padrão |
 | :--- | :--- |
-| **Página de Login** | `http://127.0.0.1:8000/` |
+| **Página de Login** | `http://127.0.0.1:8000/` (ou a URL do Render) |
 | **Usuário** | `diretor` |
-| **Senha** | `diretor123` |
-
-*(As credenciais já aparecem pré-preenchidas na tela de login para facilitar os testes iniciais).*
+| **Senha** | `FamedUFPA@2027` |
 
 ---
 

@@ -41,9 +41,10 @@ if not exist ".venv" (
     call .venv\Scripts\activate.bat
 )
 
-REM Aplica as migrações do banco de dados SQLite
+REM Aplica as migrações do banco de dados SQLite e garante usuário admin
 echo [2/2] Verificando banco de dados local...
 python manage.py migrate --noinput > nul
+python manage.py setup_admin > nul
 
 REM Abre o navegador padrão automaticamente após 2 segundos
 start "" "http://127.0.0.1:8000/"
@@ -55,7 +56,7 @@ echo ======================================================
 echo  Acesse pelo navegador: http://127.0.0.1:8000/
 echo  Credenciais de acesso padrão:
 echo     - Usuário: diretor
-echo     - Senha:   diretor123
+echo     - Senha:   FamedUFPA@2027
 echo.
 echo  Para ENCERRAR o sistema, pressione Ctrl + C nesta janela.
 echo ======================================================

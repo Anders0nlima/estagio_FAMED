@@ -7,15 +7,15 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         username = os.environ.get('ADMIN_USERNAME', 'diretor')
-        password = os.environ.get('ADMIN_PASSWORD', 'diretor123')
+        password = os.environ.get('ADMIN_PASSWORD', 'FamedUFPA@2027')
         email = os.environ.get('ADMIN_EMAIL', 'diretor@ufpa.br')
 
         user, created = User.objects.get_or_create(username=username, defaults={'email': email})
+        user.set_password(password)
+        user.is_superuser = True
+        user.is_staff = True
+        user.save()
         if created:
-            user.set_password(password)
-            user.is_superuser = True
-            user.is_staff = True
-            user.save()
             self.stdout.write(self.style.SUCCESS(f"Usuário administrador '{username}' criado com sucesso!"))
         else:
-            self.stdout.write(f"Usuário administrador '{username}' já existe no banco.")
+            self.stdout.write(self.style.SUCCESS(f"Senha do usuário administrador '{username}' atualizada com sucesso!"))
