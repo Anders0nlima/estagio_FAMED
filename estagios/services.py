@@ -320,6 +320,7 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
             semestres_permitidos=sems_list,
             percentual_cotas=edital.percentual_cotas,
             percentual_mulheres=pct_mulheres,
+            dividir_por_ciclo=edital.dividir_por_ciclo,
         )
 
     students_list = []
@@ -353,6 +354,7 @@ def executar_classificacao_edital(edital: Edital) -> Dict[str, Any]:
     audit_logs.append("================================================================================")
     audit_logs.append(f"EXECUÇÃO DO MOTOR DE CLASSIFICAÇÃO: {edital.titulo} ({edital.semestre})")
     audit_logs.append(f"Ação Afirmativa de Gênero: {'ATIVADA' if edital.aplicar_genero else 'DESATIVADA'}")
+    audit_logs.append(f"Divisão de Vagas por Ciclo: {'ATIVADA (Ímpar p/ mais avançado)' if edital.dividir_por_ciclo else 'DESATIVADA'}")
     audit_logs.append("================================================================================")
 
     # --- RODADA 1: 1ª OPÇÃO ---

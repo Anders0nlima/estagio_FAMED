@@ -345,3 +345,112 @@ def test_filtro_semestres_especificos():
     assert len(opp.selecionados) == 1
     assert opp.selecionados[0].nome == "Aluno do 10º Semestre"
     assert any("[Semestre Incompatível]" in l for l in logs)
+
+def test_divisao_por_ciclo_4_vagas():
+    """
+    Testa a divisão equitativa de 4 vagas entre Clínico e Internato (2 para cada).
+    Mesmo os alunos do Clínico tendo CRGs maiores, os do Internato garantem suas 2 vagas.
+    """
+    c1 = Student("1", "Clinico Alto 1", "", "", 9.8, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2024, 7, "clinico", datetime.date(2002, 1, 1))
+    c2 = Student("2", "Clinico Alto 2", "", "", 9.5, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2024, 7, "clinico", datetime.date(2002, 1, 1))
+    i1 = Student("3", "Internato 1", "", "", 8.0, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2022, 10, "internato", datetime.date(2000, 1, 1))
+    i2 = Student("4", "Internato 2", "", "", 7.5, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2022, 10, "internato", datetime.date(2000, 1, 1))
+
+    opp = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=4,
+        ciclos_permitidos=["clinico", "internato"], semestres_permitidos=[7, 8, 9, 10, 11],
+        percentual_cotas=0.0, percentual_mulheres=0.0, dividir_por_ciclo=True
+    )
+
+    sel, esp, logs = allocate_opportunity(opp, [c1, c2, i1, i2], vagas_disponiveis=4, rodada_nome="1ª Opção")
+    
+    assert len(sel) == 4
+    nomes_sel = {s.nome for s in sel}
+    assert "Clinico Alto 1" in nomes_sel
+    assert "Clinico Alto 2" in nomes_sel
+    assert "Internato 1" in nomes_sel
+    assert "Internato 2" in nomes_sel
+
+def test_divisao_por_ciclo_vaga_impar():
+    """
+    Testa a atribuição de vaga ímpar ao ciclo mais avançado (Internato > Clínico).
+    - Com 3 vagas: 2 vão para o Internato e 1 para o Clínico.
+    - Com 1 vaga: 1 vai para o Internato e 0 para o Clínico.
+    """
+    cands_clinico = [
+        Student(f"C{i}", f"Clinico {i}", "", "", 9.5 - i*0.1, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2024, 7, "clinico", datetime.date(2002, 1, 1))
+        for i in range(3)
+    ]
+    cands_internato = [
+        Student(f"I{i}", f"Internato {i}", "", "", 8.5 - i*0.1, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2022, 10, "internato", datetime.date(2000, 1, 1))
+        for i in range(3)
+    ]
+
+    # Teste com 3 vagas
+    opp_3 = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=3,
+        ciclos_permitidos=["clinico", "internato"], semestres_permitidos=[7, 8, 9, 10, 11],
+        percentual_cotas=0.0, percentual_mulheres=0.0, dividir_por_ciclo=True
+    )
+    sel_3, _, _ = allocate_opportunity(opp_3, cands_clinico + cands_internato, vagas_disponiveis=3)
+    internatos_sel = [s for s in sel_3 if s.ciclo == "internato"]
+    clinicos_sel = [s for s in sel_3 if s.ciclo == "clinico"]
+    assert len(internatos_sel) == 2, "Vaga ímpar de 3 deve dar 2 para o Internato"
+    assert len(clinicos_sel) == 1, "Vaga de 3 deve dar 1 para o Clínico"
+
+    # Reset status
+    for s in cands_clinico + cands_internato:
+        s.alocado = False
+        s.alocado_em = None
+        s.motivo_alocacao = ""
+
+    # Teste com 1 vaga única
+    opp_1 = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=1,
+        ciclos_permitidos=["clinico", "internato"], semestres_permitidos=[7, 8, 9, 10, 11],
+        percentual_cotas=0.0, percentual_mulheres=0.0, dividir_por_ciclo=True
+    )
+    sel_1, _, _ = allocate_opportunity(opp_1, cands_clinico + cands_internato, vagas_disponiveis=1)
+    assert len(sel_1) == 1
+    assert sel_1[0].ciclo == "internato", "Vaga única (ímpar) deve ir para o mais avançado (Internato)"
+
+def test_divisao_por_ciclo_transbordo():
+    """
+    Testa transbordo de vagas remanescentes:
+    Se uma oportunidade tem 4 vagas (2 Internato, 2 Clínico), mas nenhum aluno do Internato se inscreveu,
+    as 2 vagas do Internato migram para o Clínico (sem desperdício de vagas).
+    """
+    cands_clinico = [
+        Student(f"C{i}", f"Clinico {i}", "", "", 9.5 - i*0.1, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2024, 7, "clinico", datetime.date(2002, 1, 1))
+        for i in range(4)
+    ]
+    opp = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=4,
+        ciclos_permitidos=["clinico", "internato"], semestres_permitidos=[7, 8, 9, 10, 11],
+        percentual_cotas=0.0, percentual_mulheres=0.0, dividir_por_ciclo=True
+    )
+    sel, _, logs = allocate_opportunity(opp, cands_clinico, vagas_disponiveis=4)
+    assert len(sel) == 4
+    assert all(s.ciclo == "clinico" for s in sel)
+    assert any("[Transbordo entre Ciclos]" in l for l in logs)
+
+def test_divisao_por_ciclo_desativada():
+    """
+    Testa o botão desligado (dividir_por_ciclo = False).
+    A concorrência ocorre puramente por CRG entre todos os semestres autorizados.
+    """
+    c1 = Student("1", "Clinico 1", "", "", 9.8, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2024, 7, "clinico", datetime.date(2002, 1, 1))
+    c2 = Student("2", "Clinico 2", "", "", 9.7, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2024, 7, "clinico", datetime.date(2002, 1, 1))
+    i1 = Student("3", "Internato 1", "", "", 8.0, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2022, 10, "internato", datetime.date(2000, 1, 1))
+    i2 = Student("4", "Internato 2", "", "", 7.5, "OP1", [], datetime.datetime.now(), "M", False, "Ampla", 2022, 10, "internato", datetime.date(2000, 1, 1))
+
+    opp = Opportunity(
+        id="OP1", professor="Prof", local="L", atividade="", periodo="", vagas_total=2,
+        ciclos_permitidos=["clinico", "internato"], semestres_permitidos=[7, 8, 9, 10, 11],
+        percentual_cotas=0.0, percentual_mulheres=0.0, dividir_por_ciclo=False
+    )
+    sel, esp, logs = allocate_opportunity(opp, [c1, c2, i1, i2], vagas_disponiveis=2)
+    assert len(sel) == 2
+    assert sel[0].nome == "Clinico 1"
+    assert sel[1].nome == "Clinico 2"
+    assert any("[Divisão por Ciclo Desativada]" in l for l in logs)

@@ -75,6 +75,7 @@ def novo_edital_view(request):
         except (ValueError, TypeError):
             pct_mulheres = 0.0
         aplicar_genero = (pct_mulheres > 0.0)
+        dividir_ciclo = request.POST.get('dividir_por_ciclo', 'true').lower() in ('true', '1', 't', 'on')
 
         edital = Edital.objects.create(
             titulo=titulo,
@@ -85,6 +86,7 @@ def novo_edital_view(request):
             percentual_cotas=pct_cotas,
             percentual_mulheres=pct_mulheres,
             aplicar_genero=aplicar_genero,
+            dividir_por_ciclo=dividir_ciclo,
         )
         messages.success(request, f"Edital '{edital.titulo}' criado com sucesso! Agora anexe as planilhas.")
         return redirect('upload_planilhas', edital_id=edital.id)
@@ -114,6 +116,8 @@ def editar_edital_view(request, edital_id):
         except (ValueError, TypeError):
             pass
         edital.aplicar_genero = (edital.percentual_mulheres > 0.0)
+        if 'dividir_por_ciclo' in request.POST:
+            edital.dividir_por_ciclo = request.POST.get('dividir_por_ciclo', 'true').lower() in ('true', '1', 't', 'on')
         edital.save()
         messages.success(request, f"Edital '{edital.titulo}' atualizado com sucesso!")
         return redirect('dashboard')

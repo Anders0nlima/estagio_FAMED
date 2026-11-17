@@ -20,6 +20,7 @@ class Edital(models.Model):
     percentual_cotas = models.FloatField(default=0.5, verbose_name="Percentual de Cotas (0.0 a 1.0)")
     percentual_mulheres = models.FloatField(default=0.0, verbose_name="Mínimo de Mulheres (0.0 a 1.0)")
     aplicar_genero = models.BooleanField(default=False, verbose_name="Aplicar Ação Afirmativa de Gênero (50% mulheres)")
+    dividir_por_ciclo = models.BooleanField(default=True, verbose_name="Dividir Vagas por Ciclo de Formação")
     
     # Arquivos
     arquivo_vagas = models.FileField(upload_to='editais/vagas/', null=True, blank=True, verbose_name="Planilha dos Professores (Vagas)")

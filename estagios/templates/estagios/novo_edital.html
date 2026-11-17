@@ -143,6 +143,44 @@
                     <span class="text-[11px] text-slate-400 mt-1 block">Padrão FAMED 2027: seleção meritocrática sem cota de gênero (ou 50% afirmativa se desejado).</span>
                 </div>
 
+                <!-- Dropdown 3: Divisão por Ciclo (Novo) -->
+                <div class="sm:col-span-2">
+                    <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">
+                        Divisão de Vagas por Ciclo de Formação
+                    </label>
+                    <div class="relative custom-dropdown-container">
+                        <input type="hidden" name="dividir_por_ciclo" id="input-percentual-ciclo" value="{% if edital and not edital.dividir_por_ciclo %}false{% else %}true{% endif %}">
+                        <button 
+                            type="button" 
+                            onclick="toggleFormDropdown('menu-ciclo', event)"
+                            class="w-full flex items-center justify-between px-3.5 py-2.5 bg-white hover:bg-slate-50 text-slate-700 text-sm rounded-lg border border-slate-300 shadow-2xs transition focus:outline-none focus:ring-2 focus:ring-[#086419] cursor-pointer"
+                        >
+                            <span id="label-ciclo">
+                                {% if edital and not edital.dividir_por_ciclo %}Desativado (Concorrência Geral por CRG)
+                                {% else %}Ativado (Dividir vagas entre ciclos - Ímpar p/ mais avançado){% endif %}
+                            </span>
+                            <svg class="h-4 w-4 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                            </svg>
+                        </button>
+
+                        <div 
+                            id="menu-ciclo" 
+                            class="hidden absolute left-0 right-0 z-50 mt-1 origin-top rounded-xl bg-white shadow-xl ring-1 ring-black/5 border border-slate-200 p-1.5 focus:outline-none text-left"
+                        >
+                            <div class="space-y-0.5">
+                                <button type="button" onclick="selectOption('ciclo', 'true', 'Ativado (Dividir vagas entre ciclos - Ímpar p/ mais avançado)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>Ativado (Dividir vagas entre ciclos - Ímpar p/ mais avançado)</span>
+                                </button>
+                                <button type="button" onclick="selectOption('ciclo', 'false', 'Desativado (Concorrência Geral por CRG)')" class="w-full flex items-center px-3 py-2 text-xs font-medium text-slate-700 hover:bg-slate-100 hover:text-slate-900 rounded-lg transition-colors cursor-pointer text-left">
+                                    <span>Desativado (Concorrência Geral por CRG)</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="text-[11px] text-slate-400 mt-1 block">Quando a oportunidade aceitar múltiplos ciclos (ex: Clínico e Internato), as vagas são divididas igualmente. Vagas ímpares vão para o mais avançado.</span>
+                </div>
+
                 <!-- Regras Fixas Homologadas (Padrão Oficial FAMED) -->
                 <div class="sm:col-span-2 bg-emerald-50/60 p-4 rounded-xl border border-emerald-200/80 text-xs text-slate-700 space-y-2">
                     <div class="font-bold text-[#086419] flex items-center space-x-1.5">
@@ -150,6 +188,7 @@
                     </div>
                     <ul class="list-disc list-inside space-y-1 text-slate-600">
                         <li><b>Distribuição das Vagas:</b> Vagas divididas entre Ampla Concorrência e Cotistas (PSEI, PSEQ e Cotas Sociais/Raciais). Quando ímpar, a vaga excedente é destinada aos cotistas (com reversão mútua se não houver inscritos suficientes).</li>
+                        <li><b>Divisão por Ciclo (Não Concorrência entre Ciclos):</b> Se ativado, oportunidades abertas a múltiplos ciclos dividem suas vagas igualmente, com a vaga ímpar indo para o ciclo mais avançado.</li>
                         <li><b>Filtro de Requisitos por Semestre:</b> O sistema valida os semestres permitidos para cada oportunidade, desconsiderando inscrições incompatíveis.</li>
                         <li><b>Critérios Estritos de Desempate:</b> 1º Maior CRG → 2º Maior Idade (data de nascimento mais antiga) → 3º Timestamp de Inscrição.</li>
                         <li><b>Remanejamento em 2 Etapas:</b> 1ª Opção processada primeiro; vagas não preenchidas são disponibilizadas aos candidatos de 2ª Opção.</li>

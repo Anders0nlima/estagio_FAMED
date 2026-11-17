@@ -155,6 +155,7 @@ Na tela de Resultado Final, o Diretor pode emitir com 1 clique:
 | :--- | :--- |
 | **Distribuição de Vagas** | 50% Ampla Concorrência / 50% Cotistas. Vaga ímpar vai para o cotista (ex: 5 vagas = 3 cotas e 2 ampla; 1 vaga = 1 cota). |
 | **Cota de Gênero** | Desativada por padrão conforme diretrizes da FAMED 2027 (classificação estrita por mérito acadêmico e idade). |
+| **Divisão por Ciclo** | Quando a vaga aceitar múltiplos ciclos (ex: Clínico e Internato), as vagas são divididas igualmente. Vaga ímpar vai para o ciclo mais avançado (com transbordo automático se sobrarem vagas). |
 | **Critério de Desempate** | 1º CRG Geral $\rightarrow$ 2º Maior Idade (data de nascimento). |
 | **Filtro de Semestre** | Inscrições incompatíveis com os semestres exigidos pelo preceptor são desconsideradas automaticamente. |
 | **Prioridade de Opção** | Candidatos de 1ª opção têm prioridade sobre candidatos de 2ª opção. Quem passou na 1ª opção não concorre na 2ª. |
@@ -170,7 +171,7 @@ Na tela de Resultado Final, o Diretor pode emitir com 1 clique:
 - **Manipulação de Documentos:** `python-docx` (Word) e ReportLab (PDF)
 - **Interface:** HTML5 Semântico, Tailwind CSS, Heroicons
 - **Banco de Dados:** SQLite (Desenvolvimento / Local) & PostgreSQL (Produção / Docker)
-- **Testes Automatizados:** Pytest (15 testes cobrindo todas as regras de classificação)
+- **Testes Automatizados:** Pytest (19 testes cobrindo todas as regras de classificação)
 
 ---
 

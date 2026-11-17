@@ -297,6 +297,8 @@ def determine_cycle(semester: int) -> str:
     else:
         return 'internato'
 
+CYCLE_HIERARCHY = ['basico', 'clinico', 'internato']
+
 def parse_semestres_permitidos(text: Any) -> List[int]:
     """
     Interpreta requisitos de semestres a partir de texto livre das vagas ou códigos de ciclo.
@@ -411,6 +413,7 @@ class Opportunity:
     vagas_por_ciclo: Dict[str, int] = field(default_factory=dict)
     percentual_cotas: float = 0.5
     percentual_mulheres: float = 0.5
+    dividir_por_ciclo: bool = True
     
     # Alocados finais
     selecionados: List[Student] = field(default_factory=list)
@@ -602,6 +605,7 @@ def load_opportunities(vagas_file: Optional[str] = None) -> Dict[str, Opportunit
             vagas_por_ciclo={},
             percentual_cotas=0.5,
             percentual_mulheres=0.5,
+            dividir_por_ciclo=True,
         )
     return opp_dict
 
@@ -819,11 +823,12 @@ def sort_candidates(candidates: List[Student]) -> List[Student]:
         )
     )
 
-def allocate_opportunity(
+def _allocate_pool_standard(
     opp: Opportunity,
     eligible_candidates: List[Student],
     vagas_disponiveis: int,
-    rodada_nome: str
+    rodada_nome: str,
+    sufixo_modalidade: str = ""
 ) -> Tuple[List[Student], List[Student], List[str]]:
     """
     Passo C: Aplicação das Cotas e Gênero (Regra da Ampla Primeiro)
@@ -836,11 +841,11 @@ def allocate_opportunity(
     6. Reversão de sobras de Cotas para a Ampla Concorrência.
     """
     logs = []
-    logs.append(f"--- Iniciando Alocação: Opção {opp.id} ({opp.professor}) | Vagas: {vagas_disponiveis} | {rodada_nome} ---")
-    logs.append(f"Candidatos elegíveis inscritos: {len(eligible_candidates)}")
+    logs.append(f"--- Iniciando Alocação de Sub-pool: Opção {opp.id} ({opp.professor}) | Vagas: {vagas_disponiveis} | {rodada_nome} ---")
+    logs.append(f"Candidatos inscritos no pool: {len(eligible_candidates)}")
 
     if vagas_disponiveis <= 0 or not eligible_candidates:
-        logs.append("Nenhuma vaga a preencher ou nenhum candidato elegível.")
+        logs.append("Nenhuma vaga a preencher ou nenhum candidato elegível no pool.")
         return [], eligible_candidates, logs
 
     # Ordenação preliminar de todos os candidatos
@@ -855,7 +860,7 @@ def allocate_opportunity(
         vagas_cotas = 0
     vagas_ac = max(0, vagas_disponiveis - vagas_cotas)
 
-    logs.append(f"Divisão de vagas da oportunidade: AC = {vagas_ac}, Cotas = {vagas_cotas}")
+    logs.append(f"Divisão de vagas do pool: AC = {vagas_ac}, Cotas = {vagas_cotas}")
 
     # -------------------------------------------------------------
     # ETAPA 1: Preenchimento da Ampla Concorrência (AC)
@@ -978,22 +983,133 @@ def allocate_opportunity(
     for s in ac_selecionados:
         s.alocado = True
         s.alocado_em = opp.id
-        s.modalidade = 'Ampla Concorrência'
+        s.modalidade = f'Ampla Concorrência{sufixo_modalidade}'
         if not s.motivo_alocacao:
-            s.motivo_alocacao = f"Classificado na Ampla Concorrência ({rodada_nome}) - CRG: {s.crg:.4f}"
+            s.motivo_alocacao = f"Classificado na Ampla Concorrência{sufixo_modalidade} ({rodada_nome}) - CRG: {s.crg:.4f}"
 
     for s in cotas_selecionados:
         s.alocado = True
         s.alocado_em = opp.id
-        s.modalidade = 'Cota Reservada'
+        s.modalidade = f'Cota Reservada{sufixo_modalidade}'
         if not s.motivo_alocacao:
-            s.motivo_alocacao = f"Classificado na Vaga Reservada de Cota ({rodada_nome}) - CRG: {s.crg:.4f}"
+            s.motivo_alocacao = f"Classificado na Vaga Reservada de Cota{sufixo_modalidade} ({rodada_nome}) - CRG: {s.crg:.4f}"
 
     todos_selecionados = ac_selecionados + cotas_selecionados
     lista_espera = pool_restante
 
-    logs.append(f"Total de aprovados na oportunidade {opp.id}: {len(todos_selecionados)}/{vagas_disponiveis}")
+    logs.append(f"Total de aprovados no pool {rodada_nome}: {len(todos_selecionados)}/{vagas_disponiveis}")
     return todos_selecionados, lista_espera, logs
+
+def allocate_opportunity(
+    opp: Opportunity,
+    eligible_candidates: List[Student],
+    vagas_disponiveis: int,
+    rodada_nome: str = "1ª Opção"
+) -> Tuple[List[Student], List[Student], List[str]]:
+    """
+    Orquestra a alocação de vagas da oportunidade considerando:
+    1. Divisão equitativa por ciclo de formação (se habilitado e se a vaga abranger múltiplos ciclos).
+       Vagas ímpares são atribuídas ao ciclo mais avançado (Internato > Clínico > Básico).
+       Transbordo de vagas não preenchidas para os demais ciclos.
+    2. Caso desabilitado ou se houver apenas 1 ciclo, aloca diretamente por CRG e cotas.
+    """
+    logs = []
+    logs.append(f"--- Iniciando Alocação: Opção {opp.id} ({opp.professor}) | Vagas: {vagas_disponiveis} | {rodada_nome} ---")
+    logs.append(f"Candidatos elegíveis inscritos: {len(eligible_candidates)}")
+
+    if vagas_disponiveis <= 0 or not eligible_candidates:
+        logs.append("Nenhuma vaga a preencher ou nenhum candidato elegível.")
+        return [], eligible_candidates, logs
+
+    # Se a divisão por ciclo estiver desativada, aloca pelo método padrão diretamente
+    if not opp.dividir_por_ciclo:
+        logs.append("[Divisão por Ciclo Desativada] Concorrência ampla entre todos os semestres elegíveis por CRG.")
+        sel, esp, l = _allocate_pool_standard(opp, eligible_candidates, vagas_disponiveis, rodada_nome)
+        logs.extend(l)
+        return sel, esp, logs
+
+    # Identificar quais ciclos estão autorizados nesta oportunidade
+    if opp.semestres_permitidos:
+        cycles_opp = {determine_cycle(s) for s in opp.semestres_permitidos}
+    else:
+        cycles_opp = {str(c).lower().strip() for c in opp.ciclos_permitidos if c}
+
+    active_cycles = [c for c in CYCLE_HIERARCHY if c in cycles_opp]
+
+    # Se houver apenas 1 ciclo (ou nenhum mapeado), não há divisão entre múltiplos ciclos
+    if len(active_cycles) <= 1:
+        if active_cycles:
+            logs.append(f"[Ciclo Único: {active_cycles[0].capitalize()}] Oportunidade destinada a apenas 1 ciclo. Alocação direta.")
+        sel, esp, l = _allocate_pool_standard(opp, eligible_candidates, vagas_disponiveis, rodada_nome)
+        logs.extend(l)
+        return sel, esp, logs
+
+    # Divisão de vagas entre múltiplos ciclos com prioridade da vaga ímpar para o mais avançado
+    k = len(active_cycles)
+    base = vagas_disponiveis // k
+    rem = vagas_disponiveis % k
+    vagas_part = {c: base for c in active_cycles}
+    for i in range(rem):
+        most_advanced_cycle = active_cycles[-(i + 1)]
+        vagas_part[most_advanced_cycle] += 1
+
+    dist_str = ", ".join(f"{c.capitalize()}: {vagas_part[c]} vaga(s)" for c in active_cycles)
+    logs.append(f"[Divisão por Ciclo Ativada] {vagas_disponiveis} vaga(s) distribuída(s): {dist_str} (vaga ímpar atribuída ao ciclo mais avançado).")
+
+    all_selecionados: List[Student] = []
+    total_sobras = 0
+
+    # Alocação preliminar de cada ciclo
+    for c in active_cycles:
+        cands_c = [s for s in eligible_candidates if str(s.ciclo).lower().strip() == c and not s.alocado]
+        v_c = vagas_part[c]
+        if v_c > 0 and cands_c:
+            sel_c, _, logs_c = _allocate_pool_standard(
+                opp=opp,
+                eligible_candidates=cands_c,
+                vagas_disponiveis=v_c,
+                rodada_nome=f"{rodada_nome} - {c.capitalize()}",
+                sufixo_modalidade=f" - {c.capitalize()}"
+            )
+            all_selecionados.extend(sel_c)
+            logs.extend(logs_c)
+            if len(sel_c) < v_c:
+                sobras_c = v_c - len(sel_c)
+                total_sobras += sobras_c
+                logs.append(f"[Ciclo {c.capitalize()}] Sobraram {sobras_c} vaga(s) não preenchida(s) por falta de candidatos.")
+        elif v_c > 0 and not cands_c:
+            logs.append(f"[Ciclo {c.capitalize()}] Nenhum candidato elegível inscrito para as {v_c} vaga(s) reservadas do ciclo.")
+            total_sobras += v_c
+
+    # Transbordo (Spillover): Se sobraram vagas não preenchidas em algum ciclo, transfere para os demais
+    if total_sobras > 0:
+        pool_sobras = [s for s in eligible_candidates if s not in all_selecionados and not s.alocado]
+        if pool_sobras:
+            logs.append(f"[Transbordo entre Ciclos] {total_sobras} vaga(s) remanescente(s) redistribuída(s) para os demais ciclos.")
+            # Ordena com prioridade para ciclo mais avançado, depois CRG decrescente e maior idade
+            pool_sobras = sorted(
+                pool_sobras,
+                key=lambda s: (
+                    CYCLE_HIERARCHY.index(str(s.ciclo).lower().strip()) if str(s.ciclo).lower().strip() in CYCLE_HIERARCHY else 0,
+                    s.crg,
+                    s.data_nascimento
+                ),
+                reverse=True
+            )
+            sel_sob, _, logs_sob = _allocate_pool_standard(
+                opp=opp,
+                eligible_candidates=pool_sobras,
+                vagas_disponiveis=total_sobras,
+                rodada_nome=f"{rodada_nome} - Transbordo",
+                sufixo_modalidade=" - Transbordo"
+            )
+            all_selecionados.extend(sel_sob)
+            logs.extend(logs_sob)
+
+    lista_espera = [s for s in eligible_candidates if s not in all_selecionados]
+    lista_espera = sort_candidates(lista_espera)
+    logs.append(f"Total de aprovados na oportunidade {opp.id}: {len(all_selecionados)}/{vagas_disponiveis}")
+    return all_selecionados, lista_espera, logs
 
 def run_classification(
     opportunities: Dict[str, Opportunity],
