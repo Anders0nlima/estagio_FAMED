@@ -454,3 +454,155 @@ def test_divisao_por_ciclo_desativada():
     assert sel[0].nome == "Clinico 1"
     assert sel[1].nome == "Clinico 2"
     assert any("[Divisão por Ciclo Desativada]" in l for l in logs)
+
+def test_gerar_certificado_word_conteudo_e_layout(tmp_path):
+    """
+    Testa a geração do Certificado oficial em Word (.docx) no formato A4 normal:
+    - Valida dimensões A4 (8.27 x 11.69 polegadas)
+    - Valida texto padrão exato solicitado pela diretoria
+    - Valida carga horária personalizada
+    - Valida assinatura final do Diretor da FAMED
+    """
+    import os
+    import django
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+    django.setup()
+
+    import docx
+    from docx.shared import Inches
+    from estagios.models import Edital, Oportunidade, Candidato, Resultado
+    from estagios.services import gerar_certificado_individual_word, salvar_frequencias_em_lote
+
+    edital = Edital.objects.create(
+        titulo="Estágio de Férias FAMED",
+        semestre="2027.1",
+        numero_oficio="414/2027",
+        protocolo="23073.012345/2027-89",
+    )
+    try:
+        op = Oportunidade.objects.create(
+            edital=edital,
+            codigo_opcao="5",
+            professor="João Alberto Maradei",
+            local="Hospital Maradei",
+            atividade="Acompanhamento ortopédico",
+            periodo="24/07 a 23/08: segunda, quarta e sexta (7h às 19h)",
+            vagas_totais=1,
+        )
+        cand = Candidato.objects.create(
+            edital=edital,
+            matricula="202309740093",
+            nome="Louise Vitória Dias Pena Costa",
+            email="louise.costa@icm.ufpa.br",
+            telefone="(91) 98888-0000",
+            crg_oficial=8.85,
+            semestre=7,
+            ciclo="clinico",
+            op1=5,
+        )
+        resultado = Resultado.objects.create(
+            edital=edital,
+            candidato=cand,
+            oportunidade=op,
+            status="APROVADO",
+            concluiu_estagio=True,
+            frequencia_percentual=100.0,
+            carga_horaria_horas=45,  # Horas customizadas
+        )
+
+        docx_file = str(tmp_path / "teste_certificado.docx")
+        gerar_certificado_individual_word(resultado, docx_file)
+
+        assert os.path.exists(docx_file), "O arquivo .docx deve ter sido criado com sucesso."
+        
+        doc = docx.Document(docx_file)
+        section = doc.sections[0]
+        
+        # Valida formato A4 (aproximadamente 8.27 x 11.69 polegadas)
+        assert abs(section.page_width.inches - 8.27) < 0.05
+        assert abs(section.page_height.inches - 11.69) < 0.05
+
+        # Concatena todo o texto do documento
+        doc_text = " ".join(p.text for p in doc.paragraphs)
+
+        # Valida que o cabeçalho ministerial foi removido conforme solicitação da diretoria
+        assert "REPÚBLICA FEDERATIVA DO BRASIL" not in doc_text
+        assert "MINISTÉRIO DA EDUCAÇÃO" not in doc_text
+
+        # Valida título
+        assert "CERTIFICADO DE ESTÁGIO VOLUNTÁRIO" in doc_text
+
+        # Valida texto padrão exato do discente e carga horária
+        assert "LOUISE VITÓRIA DIAS PENA COSTA" in doc_text
+        assert "202309740093" in doc_text
+        assert "ESTÁGIO DE FÉRIAS DA FAMED-UFPA" in doc_text
+        assert "serviço do Hospital Maradei" in doc_text
+        assert "João Alberto Maradei" in doc_text
+        assert "24/07 a 23/08: segunda, quarta e sexta (7h às 19h)" in doc_text
+        assert "45 horas" in doc_text
+
+        # Valida assinatura do Diretor da FAMED no final
+        assert "Prof. Dr. Cezar Augusto Muniz Caldas" in doc_text
+        assert "Diretor da Faculdade de Medicina" in doc_text
+        assert "FAMED / ICM – UFPA" in doc_text
+    finally:
+        edital.delete()
+
+def test_salvar_carga_horaria_em_lote():
+    """
+    Testa a atualização da carga horária personalizada submetida pelo Diretor
+    através da função salvar_frequencias_em_lote.
+    """
+    import os
+    import django
+    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'core.settings')
+    django.setup()
+
+    from estagios.models import Edital, Oportunidade, Candidato, Resultado
+    from estagios.services import salvar_frequencias_em_lote
+
+    edital = Edital.objects.create(
+        titulo="Edital Teste Carga",
+        semestre="2027.2",
+    )
+    try:
+        op = Oportunidade.objects.create(
+            edital=edital,
+            codigo_opcao="1",
+            professor="Prof Teste",
+            local="HUJBB",
+            periodo="Integral",
+            vagas_totais=1,
+        )
+        cand = Candidato.objects.create(
+            edital=edital,
+            matricula="202300001",
+            nome="Aluno Teste",
+            crg_oficial=8.0,
+            semestre=8,
+            ciclo="clinico",
+            op1=1,
+        )
+        res = Resultado.objects.create(
+            edital=edital,
+            candidato=cand,
+            oportunidade=op,
+            status="APROVADO",
+            carga_horaria_horas=36,
+        )
+
+        dados_post = {
+            f"status_{res.id}": "APTO",
+            f"freq_{res.id}": "90",
+            f"carga_{res.id}": "48",  # Diretor editou para 48h
+        }
+
+        salvar_frequencias_em_lote(edital, dados_post)
+
+        res.refresh_from_db()
+        assert res.carga_horaria_horas == 48
+        assert res.frequencia_percentual == 90.0
+        assert res.concluiu_estagio is True
+    finally:
+        edital.delete()
+

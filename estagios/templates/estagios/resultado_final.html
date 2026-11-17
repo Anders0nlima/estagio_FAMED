@@ -132,22 +132,24 @@
                             <tr>
                                 <th class="px-5 py-2.5">Pos.</th>
                                 <th class="px-5 py-2.5">Estudante</th>
-                                <th class="px-5 py-2.5">Matrícula</th>
+                                <th class="px-5 py-2.5">Ciclo e Semestre</th>
                                 <th class="px-5 py-2.5">CRG</th>
                                 <th class="px-5 py-2.5">Opção</th>
                                 <th class="px-5 py-2.5">Critério / Etiqueta de Entrada</th>
-                                <th class="px-5 py-2.5">Contato</th>
+                                <th class="px-5 py-2.5">Contato / E-mail</th>
                             </tr>
                         </thead>
                         <tbody class="divide-y divide-slate-100">
                             {% for res in op.alocados.all %}
                             <tr class="hover:bg-slate-50/60 transition">
                                 <td class="px-5 py-3 font-bold text-slate-700">#{{ res.posicao }}</td>
-                                <td class="px-5 py-3 font-semibold text-slate-900 text-sm">
-                                    {{ res.candidato.nome }}
-                                    <span class="block text-[11px] font-normal text-slate-400">Ciclo {{ res.candidato.ciclo|title }}</span>
+                                <td class="px-5 py-3">
+                                    <span class="font-semibold text-slate-900 text-sm block">{{ res.candidato.nome }}</span>
+                                    <span class="text-[11px] font-mono text-[#086419] font-medium block">Matrícula: {{ res.candidato.matricula }}</span>
                                 </td>
-                                <td class="px-5 py-3 font-mono text-slate-500">{{ res.candidato.matricula }}</td>
+                                <td class="px-5 py-3 text-slate-700 font-medium">
+                                    Ciclo {{ res.candidato.ciclo|title }} ({{ res.candidato.semestre }}º sem)
+                                </td>
                                 <td class="px-5 py-3 font-mono font-bold text-slate-800 text-sm">{{ res.candidato.crg_oficial|floatformat:4 }}</td>
                                 <td class="px-5 py-3">
                                     <span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium">
@@ -169,8 +171,15 @@
                                     </span>
                                     {% endif %}
                                 </td>
-                                <td class="px-5 py-3 text-slate-500 font-mono text-[11px]">
-                                    {{ res.candidato.telefone }}
+                                <td class="px-5 py-3 text-xs">
+                                    <span class="font-mono text-slate-800 text-[11px] font-semibold block leading-tight">
+                                        {{ res.candidato.telefone }}{% if res.candidato.email %} <span class="text-slate-400 font-normal">/</span>{% endif %}
+                                    </span>
+                                    {% if res.candidato.email %}
+                                    <span class="text-slate-500 text-[11px] block truncate max-w-[220px] leading-tight mt-0.5" title="{{ res.candidato.email }}">
+                                        {{ res.candidato.email }}
+                                    </span>
+                                    {% endif %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -194,27 +203,41 @@
                         <tr>
                             <th class="px-5 py-3">Posição</th>
                             <th class="px-5 py-3">Estudante</th>
-                            <th class="px-5 py-3">Matrícula</th>
                             <th class="px-5 py-3">CRG</th>
-                            <th class="px-5 py-3">Ciclo</th>
+                            <th class="px-5 py-3">Ciclo e Semestre</th>
                             <th class="px-5 py-3">Opções Solicitadas</th>
                             <th class="px-5 py-3">Modalidade</th>
+                            <th class="px-5 py-3">Contato / E-mail</th>
                         </tr>
                     </thead>
                     <tbody class="divide-y divide-slate-100">
                         {% for res in reserva %}
                         <tr class="hover:bg-slate-50/60 transition">
                             <td class="px-5 py-3 font-bold text-slate-700">#{{ res.posicao }}</td>
-                            <td class="px-5 py-3 font-semibold text-slate-900">{{ res.candidato.nome }}</td>
-                            <td class="px-5 py-3 font-mono text-slate-500">{{ res.candidato.matricula }}</td>
-                            <td class="px-5 py-3 font-mono font-bold text-slate-800">{{ res.candidato.crg_oficial|floatformat:4 }}</td>
-                            <td class="px-5 py-3 uppercase text-[10px] font-medium">{{ res.candidato.ciclo }}</td>
+                            <td class="px-5 py-3">
+                                <span class="font-semibold text-slate-900 text-sm block">{{ res.candidato.nome }}</span>
+                                <span class="text-[11px] font-mono text-[#086419] font-medium block">Matrícula: {{ res.candidato.matricula }}</span>
+                            </td>
+                            <td class="px-5 py-3 font-mono font-bold text-slate-800 text-sm">{{ res.candidato.crg_oficial|floatformat:4 }}</td>
+                            <td class="px-5 py-3 text-slate-700 font-medium">
+                                Ciclo {{ res.candidato.ciclo|title }} ({{ res.candidato.semestre }}º semestre)
+                            </td>
                             <td class="px-5 py-3 text-slate-500">1ª: {{ res.candidato.op1 }} | 2ª: {{ res.candidato.op2|default:"-" }}</td>
                             <td class="px-5 py-3">
                                 {% if res.candidato.is_cotista %}
                                 <span class="bg-purple-100 text-purple-800 px-2 py-0.5 rounded text-[10px] font-medium">Cotista</span>
                                 {% else %}
                                 <span class="bg-slate-100 text-slate-700 px-2 py-0.5 rounded text-[10px] font-medium">Ampla</span>
+                                {% endif %}
+                            </td>
+                            <td class="px-5 py-3 text-xs">
+                                <span class="font-mono text-slate-800 text-[11px] font-semibold block leading-tight">
+                                    {{ res.candidato.telefone }}{% if res.candidato.email %} <span class="text-slate-400 font-normal">/</span>{% endif %}
+                                </span>
+                                {% if res.candidato.email %}
+                                <span class="text-slate-500 text-[11px] block truncate max-w-[220px] leading-tight mt-0.5" title="{{ res.candidato.email }}">
+                                    {{ res.candidato.email }}
+                                </span>
                                 {% endif %}
                             </td>
                         </tr>

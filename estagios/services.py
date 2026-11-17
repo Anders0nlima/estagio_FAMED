@@ -527,6 +527,8 @@ def importar_planilha_frequencia(edital: Edital, excel_path: str) -> Dict[str, A
             col_status = c
         elif 'obs' in c_low:
             col_obs = c
+        elif 'carga' in c_low or 'horas' in c_low:
+            col_carga = c
 
     atualizados = 0
     aptos_count = 0
@@ -544,6 +546,15 @@ def importar_planilha_frequencia(edital: Edital, excel_path: str) -> Dict[str, A
         resultado = aprovados_dict.get(mat)
         if not resultado:
             continue
+
+        # Carga Horária opcional informada na planilha
+        if col_carga and pd.notna(row[col_carga]):
+            try:
+                ch_val = int(float(str(row[col_carga]).strip()))
+                if ch_val > 0:
+                    resultado.carga_horaria_horas = ch_val
+            except (ValueError, TypeError):
+                pass
 
         raw_freq = row[col_freq] if col_freq else None
         raw_status = str(row[col_status]).strip().lower() if col_status else ''
@@ -610,9 +621,20 @@ def salvar_frequencias_em_lote(edital: Edital, dados_frequencia: Dict[str, Any])
         r_id = str(r.id)
         status_key = f"status_{r_id}"
         freq_key = f"freq_{r_id}"
+        carga_key = f"carga_{r_id}"
         
         status_val = str(dados_frequencia.get(status_key, '')).strip().upper()
         freq_val_raw = dados_frequencia.get(freq_key)
+        carga_val_raw = dados_frequencia.get(carga_key)
+
+        # Atualização da Carga Horária editável pelo Diretor
+        if carga_val_raw is not None and str(carga_val_raw).strip():
+            try:
+                ch_num = int(str(carga_val_raw).strip())
+                if ch_num > 0:
+                    r.carga_horaria_horas = ch_num
+            except (ValueError, TypeError):
+                pass
 
         freq_val = None
         if freq_val_raw is not None and str(freq_val_raw).strip():
@@ -628,11 +650,11 @@ def salvar_frequencias_em_lote(edital: Edital, dados_frequencia: Dict[str, Any])
         if status_val == 'REPROVADO':
             r.concluiu_estagio = False
             r.frequencia_percentual = freq_val if freq_val is not None else 0.0
-            r.justificativa_frequencia = f"Reprovado: {f'Frequência insuficiente ({r.frequencia_percentual:.1f}% < 75%)' if r.frequencia_percentual is not None else 'Frequência insuficiente informada pelo supervisor.'}"
+            r.justificativa_frequencia = f"Reprovado: {f'Frequência insuficiente ({r.frequencia_percentual:.1f}% < 75%)' if freq_val is not None else 'Estágio não concluído ou frequência insuficiente.'}"
         elif status_val == 'APTO':
             r.concluiu_estagio = True
             r.frequencia_percentual = freq_val if freq_val is not None else 100.0
-            r.justificativa_frequencia = f"Apto: Cumpriu estágio com sucesso ({r.frequencia_percentual:.1f}%)."
+            r.justificativa_frequencia = f"Apto: Cumpriu estágio com sucesso{f' ({r.frequencia_percentual:.1f}%)' if freq_val is not None else '.'}"
         elif status_val == 'PENDENTE':
             r.concluiu_estagio = False
             r.frequencia_percentual = None
@@ -886,6 +908,184 @@ def gerar_zip_certificados(edital: Edital, zip_output_path: str) -> str:
             pdf_path = os.path.join(pasta_temp, pdf_filename)
             gerar_certificado_individual_pdf(r, pdf_path)
             zipf.write(pdf_path, arcname=pdf_filename)
+
+    return zip_output_path
+
+
+def gerar_certificado_individual_word(resultado: Resultado, output_path: str) -> str:
+    """
+    Gera o Certificado de Conclusão oficial individual em formato Word (.docx) em folha A4 normal.
+    Atende à solicitação da Diretoria com layout limpo e editável, brasão da UFPA,
+    texto padrão oficial homologado e assinatura do Diretor da FAMED.
+    """
+    import docx
+    from docx.shared import Inches, Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.oxml import parse_xml
+    from docx.oxml.ns import nsdecls
+
+    candidato = resultado.candidato
+    oportunidade = resultado.oportunidade
+    edital = resultado.edital
+
+    # Hash de Autenticidade Único (SHA-256 de 10 dígitos)
+    seed = f"{candidato.matricula}_{oportunidade.id if oportunidade else 0}_{edital.id}_{settings.SECRET_KEY}"
+    codigo_autenticidade = f"FAMED-{hashlib.sha256(seed.encode()).hexdigest()[:10].upper()}"
+
+    dir_output = os.path.dirname(os.path.abspath(output_path))
+    if dir_output:
+        os.makedirs(dir_output, exist_ok=True)
+
+    doc = docx.Document()
+
+    # 1. Configuração da Página: Formato A4 Padrão (210 x 297 mm) em Orientação Retrato
+    for section in doc.sections:
+        section.page_width = Inches(8.27)
+        section.page_height = Inches(11.69)
+        section.top_margin = Inches(1.8)
+        section.bottom_margin = Inches(1.2)
+        section.left_margin = Inches(1.2)
+        section.right_margin = Inches(1.2)
+
+    # 2. Título do Certificado (Centralizado, Negrito, Preto)
+    p_title = doc.add_paragraph()
+    p_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_title.paragraph_format.space_before = Pt(20)
+    p_title.paragraph_format.space_after = Pt(36)
+    run_title = p_title.add_run("CERTIFICADO DE ESTÁGIO VOLUNTÁRIO")
+    run_title.bold = True
+    run_title.font.size = Pt(18)
+    run_title.font.name = "Calibri"
+    run_title.font.color.rgb = RGBColor(0, 0, 0)
+
+    # 3. Tratamento de Dados Dinâmicos
+    nome_aluno = candidato.nome.strip().upper()
+    matricula = candidato.matricula.strip()
+    
+    local = oportunidade.local.strip() if (oportunidade and oportunidade.local) else "Hospital Universitário João de Barros Barreto (HUJBB)"
+    if local.lower().startswith("serviço do "):
+        texto_local = local
+    elif local.lower().startswith("do ") or local.lower().startswith("da ") or local.lower().startswith("de "):
+        texto_local = f"serviço {local}"
+    else:
+        texto_local = f"serviço do {local}"
+
+    professor = oportunidade.professor.strip() if (oportunidade and oportunidade.professor) else "Docente Supervisor(a)"
+    periodo = oportunidade.periodo.strip() if (oportunidade and oportunidade.periodo) else "período do edital"
+    carga_horaria = resultado.carga_horaria_horas if resultado.carga_horaria_horas else 36
+
+    # 4. Corpo do Texto Oficial Homologado (Formatado em A4 Justificado, espaçamento 1.5, Preto)
+    p_corpo = doc.add_paragraph()
+    p_corpo.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    p_corpo.paragraph_format.space_before = Pt(6)
+    p_corpo.paragraph_format.space_after = Pt(32)
+    p_corpo.paragraph_format.line_spacing = 1.5
+
+    def add_span(text: str, bold: bool = False):
+        run = p_corpo.add_run(text)
+        run.bold = bold
+        run.font.size = Pt(12.5)
+        run.font.name = "Calibri"
+        run.font.color.rgb = RGBColor(0, 0, 0)
+        return run
+
+    add_span("Certificamos que o(a) discente ")
+    add_span(nome_aluno, bold=True)
+    add_span(", matrícula nº ")
+    add_span(matricula, bold=True)
+    add_span(", realizou com assiduidade e aproveitamento o estágio voluntário do programa ")
+    add_span("ESTÁGIO DE FÉRIAS DA FAMED-UFPA", bold=True)
+    add_span(f", {texto_local}")
+    add_span(", sob orientação da(o) docente ")
+    add_span(professor, bold=True)
+    add_span(", no período de ")
+    add_span(periodo, bold=True)
+    add_span(", cumprindo com êxito a carga horária total de ")
+    add_span(f"{carga_horaria} horas", bold=True)
+    add_span(".")
+
+    # 5. Data de Emissão por Extenso
+    hoje = datetime.date.today()
+    meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+             'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro']
+    data_formatada = f"Belém-PA, {hoje.day:02d} de {meses[hoje.month - 1]} de {hoje.year}."
+
+    p_data = doc.add_paragraph()
+    p_data.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    p_data.paragraph_format.space_before = Pt(8)
+    p_data.paragraph_format.space_after = Pt(54)
+    run_data = p_data.add_run(data_formatada)
+    run_data.font.size = Pt(11.5)
+    run_data.font.name = "Calibri"
+    run_data.font.color.rgb = RGBColor(0, 0, 0)
+
+    # 6. Assinatura do Diretor da FAMED
+    p_sig = doc.add_paragraph()
+    p_sig.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_sig.paragraph_format.space_before = Pt(24)
+    p_sig.paragraph_format.space_after = Pt(2)
+    p_sig.paragraph_format.line_spacing = 1.15
+
+    r_linha = p_sig.add_run("___________________________________________________\n")
+    r_linha.font.size = Pt(10)
+    r_linha.font.color.rgb = RGBColor(0, 0, 0)
+
+    r_dir_nome = p_sig.add_run("Prof. Dr. Cezar Augusto Muniz Caldas\n")
+    r_dir_nome.bold = True
+    r_dir_nome.font.size = Pt(11)
+    r_dir_nome.font.name = "Calibri"
+    r_dir_nome.font.color.rgb = RGBColor(0, 0, 0)
+
+    r_dir_cargo = p_sig.add_run("Diretor da Faculdade de Medicina\n")
+    r_dir_cargo.font.size = Pt(10)
+    r_dir_cargo.font.name = "Calibri"
+    r_dir_cargo.font.color.rgb = RGBColor(0, 0, 0)
+
+    r_dir_inst = p_sig.add_run("FAMED / ICM – UFPA")
+    r_dir_inst.font.size = Pt(9.5)
+    r_dir_inst.font.name = "Calibri"
+    r_dir_inst.font.color.rgb = RGBColor(70, 70, 70)
+
+    # 7. Rodapé de Registro Institucional e Código de Autenticidade
+    p_auth = doc.add_paragraph()
+    p_auth.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p_auth.paragraph_format.space_before = Pt(45)
+    p_auth.paragraph_format.space_after = Pt(0)
+    p_auth.paragraph_format.line_spacing = 1.15
+
+    r_auth = p_auth.add_run(
+        f"Registro Institucional nº {edital.numero_oficio} • Protocolo SIPAC: {edital.protocolo} • Código de Autenticidade: {codigo_autenticidade}\n"
+        f"A autenticidade deste certificado pode ser verificada junto à Secretaria da FAMED/UFPA."
+    )
+    r_auth.font.size = Pt(8)
+    r_auth.font.italic = True
+    r_auth.font.name = "Calibri"
+    r_auth.font.color.rgb = RGBColor(140, 140, 140)
+
+    doc.save(output_path)
+
+    # Registra no modelo
+    resultado.certificado_codigo = codigo_autenticidade
+    resultado.certificado_gerado_em = timezone.now()
+    resultado.save()
+
+    return output_path
+
+
+def gerar_zip_certificados_word(edital: Edital, zip_output_path: str) -> str:
+    """Gera um arquivo ZIP com todos os certificados em formato Word (.docx) dos concluintes do edital."""
+    concluintes = Resultado.objects.filter(edital=edital, status='APROVADO', concluiu_estagio=True).select_related('candidato', 'oportunidade')
+
+    pasta_temp = os.path.join(settings.MEDIA_ROOT, f"temp_certificados_word_{edital.id}")
+    os.makedirs(pasta_temp, exist_ok=True)
+
+    with zipfile.ZipFile(zip_output_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for r in concluintes:
+            safe_name = re.sub(r'\W+', '_', r.candidato.nome)
+            docx_filename = f"Certificado_FAMED_{r.candidato.matricula}_{safe_name}.docx"
+            docx_path = os.path.join(pasta_temp, docx_filename)
+            gerar_certificado_individual_word(r, docx_path)
+            zipf.write(docx_path, arcname=docx_filename)
 
     return zip_output_path
 

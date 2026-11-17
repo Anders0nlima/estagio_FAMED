@@ -19,6 +19,8 @@ from .services import (
     importar_planilha_frequencia,
     salvar_frequencias_em_lote,
     marcar_todos_aptos,
+    gerar_certificado_individual_word,
+    gerar_zip_certificados_word,
     gerar_certificado_individual_pdf,
     gerar_zip_certificados,
     disparar_certificados_email,
@@ -383,7 +385,7 @@ def salvar_frequencia_view(request, edital_id):
     edital = get_object_or_404(Edital, id=edital_id)
     if request.method == 'POST':
         total = salvar_frequencias_em_lote(edital, request.POST)
-        messages.success(request, f"Frequências e status atualizados com sucesso ({total} alunos processados)!")
+        messages.success(request, f"Cargas horárias, frequências e status atualizados com sucesso ({total} alunos processados)!")
     return redirect('frequencia_certificados', edital_id=edital.id)
 
 @login_required
@@ -441,25 +443,38 @@ def upload_planilha_frequencia_view(request, edital_id):
 
 @login_required
 def baixar_certificado_individual_view(request, resultado_id):
-    """Gera e faz o download do Certificado individual em PDF de um aluno aprovado."""
+    """Gera e faz o download do Certificado individual em formato Word (.docx) de um aluno aprovado (ou PDF opcional)."""
     resultado = get_object_or_404(Resultado.objects.select_related('candidato', 'oportunidade', 'edital'), id=resultado_id)
     
     pasta_cert = os.path.join(settings.MEDIA_ROOT, f"certificados_edital_{resultado.edital.id}")
     os.makedirs(pasta_cert, exist_ok=True)
     
     safe_name = "".join(c for c in resultado.candidato.nome if c.isalnum() or c in (' ', '_', '-')).rstrip()
-    pdf_filename = f"Certificado_FAMED_{resultado.candidato.matricula}_{safe_name}.pdf"
-    pdf_path = os.path.join(pasta_cert, pdf_filename)
+    formato = request.GET.get('formato', 'word').lower()
+
+    if formato == 'pdf':
+        pdf_filename = f"Certificado_FAMED_{resultado.candidato.matricula}_{safe_name}.pdf"
+        pdf_path = os.path.join(pasta_cert, pdf_filename)
+        gerar_certificado_individual_pdf(resultado, pdf_path)
+        if os.path.exists(pdf_path):
+            return FileResponse(open(pdf_path, 'rb'), content_type='application/pdf', filename=pdf_filename)
+        raise Http404("Erro ao gerar o certificado em PDF.")
     
-    gerar_certificado_individual_pdf(resultado, pdf_path)
+    docx_filename = f"Certificado_FAMED_{resultado.candidato.matricula}_{safe_name}.docx"
+    docx_path = os.path.join(pasta_cert, docx_filename)
+    gerar_certificado_individual_word(resultado, docx_path)
     
-    if os.path.exists(pdf_path):
-        return FileResponse(open(pdf_path, 'rb'), content_type='application/pdf', filename=pdf_filename)
-    raise Http404("Erro ao gerar o certificado em PDF.")
+    if os.path.exists(docx_path):
+        return FileResponse(
+            open(docx_path, 'rb'), 
+            content_type='application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+            filename=docx_filename
+        )
+    raise Http404("Erro ao gerar o certificado em Word (.docx).")
 
 @login_required
 def baixar_certificados_zip_view(request, edital_id):
-    """Empacota e faz o download de todos os certificados dos alunos aptos em um arquivo ZIP."""
+    """Empacota e faz o download de todos os certificados dos alunos aptos em formato Word (.docx) em um arquivo ZIP."""
     edital = get_object_or_404(Edital, id=edital_id)
     
     concluintes_count = Resultado.objects.filter(edital=edital, status='APROVADO', concluiu_estagio=True).count()
@@ -467,10 +482,15 @@ def baixar_certificados_zip_view(request, edital_id):
         messages.warning(request, "Nenhum aluno concluinte (Apto) encontrado para gerar certificados no momento.")
         return redirect('frequencia_certificados', edital_id=edital.id)
 
-    zip_filename = f"Certificados_Conclusao_FAMED_{edital.semestre}.zip"
-    zip_path = os.path.join(settings.MEDIA_ROOT, zip_filename)
-
-    gerar_zip_certificados(edital, zip_path)
+    formato = request.GET.get('formato', 'word').lower()
+    if formato == 'pdf':
+        zip_filename = f"Certificados_PDF_FAMED_{edital.semestre}.zip"
+        zip_path = os.path.join(settings.MEDIA_ROOT, zip_filename)
+        gerar_zip_certificados(edital, zip_path)
+    else:
+        zip_filename = f"Certificados_Word_FAMED_{edital.semestre}.zip"
+        zip_path = os.path.join(settings.MEDIA_ROOT, zip_filename)
+        gerar_zip_certificados_word(edital, zip_path)
 
     if os.path.exists(zip_path):
         return FileResponse(open(zip_path, 'rb'), content_type='application/zip', filename=zip_filename)
