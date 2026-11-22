@@ -1,10 +1,12 @@
 from django.shortcuts import render, redirect, get_object_or_404
-from django.contrib.auth.decorators import login_required
-from django.contrib.auth import authenticate, login, logout
 from django.contrib import messages
 from django.http import HttpResponse, FileResponse, Http404
 from django.conf import settings
 import os
+
+# Modo de acesso aberto (sem login obrigatório)
+def login_required(view_func):
+    return view_func
 
 from .models import Edital, Oportunidade, Candidato, Resultado, LogDecisao
 from .services import (
@@ -29,22 +31,10 @@ from .services import (
 )
 
 def login_view(request):
-    if request.user.is_authenticated:
-        return redirect('dashboard')
-    if request.method == 'POST':
-        u = request.POST.get('username')
-        p = request.POST.get('password')
-        user = authenticate(request, username=u, password=p)
-        if user is not None:
-            login(request, user)
-            return redirect('dashboard')
-        else:
-            messages.error(request, "Usuário ou senha inválidos. Tente novamente.")
-    return render(request, 'estagios/login.html')
+    return redirect('dashboard')
 
 def logout_view(request):
-    logout(request)
-    return redirect('login')
+    return redirect('dashboard')
 
 @login_required
 def dashboard_view(request):
