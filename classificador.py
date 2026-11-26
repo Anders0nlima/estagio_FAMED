@@ -111,6 +111,15 @@ def remove_accents(text: str) -> str:
     import unicodedata
     return ''.join(c for c in unicodedata.normalize('NFD', text) if unicodedata.category(c) != 'Mn')
 
+def normalize_name(name: Any) -> str:
+    """Normaliza nome completo para cruzamento seguro (sem acentos, minúsculo e sem espaços extras)."""
+    if not name or pd.isna(name):
+        return ''
+    s = str(name).strip()
+    if s.lower() in ('nan', 'none', 'null'):
+        return ''
+    return ' '.join(remove_accents(s).lower().split())
+
 def guess_gender(full_name: str) -> str:
     """
     Prediz o gênero com base no primeiro nome.
@@ -257,7 +266,8 @@ def parse_option_list(raw_val: Any) -> List[str]:
     if pd.isna(raw_val):
         return []
     s = str(raw_val).strip()
-    if not s or s.lower() in ('nan', 'none', 'nenhuma', 'não', 'nao', '-'):
+    s_low = s.lower()
+    if not s or s_low in ('nan', 'none', 'nenhuma', 'não', 'nao', '-') or 'não tenho interesse' in s_low or 'nao tenho interesse' in s_low:
         return []
     
     # Procura todos os números ou códigos presentes
@@ -582,14 +592,108 @@ OPORTUNIDADES_CANONICAS = [
     },
 ]
 
+def parse_opportunities_docx(docx_path: str) -> List[Dict[str, Any]]:
+    """
+    Extrai as oportunidades de estágio diretamente do documento Word organizado pela Diretoria
+    (ex: 'Estagio_de_Ferias_FAMED_2027_Candidatura.docx').
+    Formato esperado nos parágrafos:
+      '1) Local – Docente responsável: Prof. Atividades: ... Período: ... Vagas: N ... Perfil do(a) estudante: ...'
+    """
+    import docx
+
+    doc = docx.Document(docx_path)
+    textos = [p.text.strip() for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            row_txt = " ".join(c.text.strip() for c in row.cells if c.text.strip())
+            if row_txt:
+                textos.append(row_txt)
+
+    parsed_ops: List[Dict[str, Any]] = []
+    seen_ids = set()
+
+    # Marcadores flexíveis das seções dentro de cada parágrafo de oportunidade
+    sec_pattern = re.compile(
+        r'(Docente\s+respons[áa]vel\s*:|Atividades?\s*:|Per[íi]odo\s*:|Vagas?\s*:|Perfil(?:\s+do\(?a\)?\s+estudante)?\s*:)',
+        re.IGNORECASE
+    )
+
+    for txt in textos:
+        m_id = re.match(r'^(\d+(?:\.\d+)?)\)\s*(.+)$', txt)
+        if not m_id:
+            continue
+
+        op_id = m_id.group(1).strip()
+        if op_id in seen_ids:
+            continue
+
+        rest = m_id.group(2).strip()
+        parts = sec_pattern.split(rest)
+        # parts[0] é o local (antes de "Docente responsável:")
+        local = re.sub(r'[\s–—-]+$', '', parts[0]).strip() or f"Local da Opção {op_id}"
+
+        sections: Dict[str, str] = {}
+        for idx in range(1, len(parts) - 1, 2):
+            key_raw = remove_accents(parts[idx].lower())
+            val_raw = parts[idx + 1].strip()
+            val_clean = re.sub(r'[.\s]+$', '', val_raw).strip()
+            if 'docente' in key_raw:
+                sections['professor'] = val_clean
+            elif 'atividade' in key_raw:
+                sections['atividade'] = val_clean
+            elif 'periodo' in key_raw:
+                sections['periodo'] = val_clean
+            elif 'vaga' in key_raw:
+                sections['vagas'] = val_clean
+            elif 'perfil' in key_raw:
+                sections['perfil'] = val_clean
+
+        if not sections.get('professor') and not sections.get('vagas'):
+            continue
+
+        professor = sections.get('professor', 'Docente Responsável')
+        atividade = sections.get('atividade', '')
+        periodo = sections.get('periodo', 'A definir')
+
+        vagas_str = sections.get('vagas', '1')
+        m_vaga = re.search(r'(\d+)', vagas_str)
+        vagas_total = int(m_vaga.group(1)) if m_vaga else 1
+
+        perfil = sections.get('perfil', '')
+        sems = parse_semestres_permitidos(perfil)
+        ciclos = sorted(
+            list({determine_cycle(s) for s in sems}),
+            key=lambda c: CYCLE_HIERARCHY.index(c)
+        )
+
+        seen_ids.add(op_id)
+        parsed_ops.append({
+            'id': op_id,
+            'professor': professor,
+            'local': local,
+            'atividade': atividade,
+            'periodo': periodo,
+            'vagas_total': vagas_total,
+            'ciclos_permitidos': ciclos,
+            'semestres_permitidos': sems,
+        })
+
+    return parsed_ops
+
 def load_opportunities(vagas_file: Optional[str] = None) -> Dict[str, Opportunity]:
     """
     Carrega as oportunidades de estágio.
-    Utiliza a lista canônica das opções 1 a 16 e permite enriquecimento/sobrescrita
-    a partir da planilha de respostas dos professores se fornecida.
+    Quando fornecido um arquivo .docx estruturado pela Diretoria, extrai dinamicamente todas as ofertas.
+    Caso contrário, utiliza a lista canônica de fallback.
     """
+    source_list = OPORTUNIDADES_CANONICAS
+    if vagas_file and os.path.exists(vagas_file) and str(vagas_file).lower().endswith('.docx'):
+        parsed = parse_opportunities_docx(vagas_file)
+        if parsed:
+            source_list = parsed
+
     opp_dict = {}
-    for op in OPORTUNIDADES_CANONICAS:
+    for op in source_list:
         sems = op.get('semestres_permitidos')
         if not sems:
             sems = parse_semestres_permitidos(",".join(op['ciclos_permitidos']))
@@ -604,7 +708,7 @@ def load_opportunities(vagas_file: Optional[str] = None) -> Dict[str, Opportunit
             semestres_permitidos=sems,
             vagas_por_ciclo={},
             percentual_cotas=0.5,
-            percentual_mulheres=0.5,
+            percentual_mulheres=0.0,
             dividir_por_ciclo=True,
         )
     return opp_dict
@@ -614,58 +718,82 @@ def load_opportunities(vagas_file: Optional[str] = None) -> Dict[str, Opportunit
 # 5. CARREGAMENTO E HIGIENIZAÇÃO DOS CANDIDATOS
 # =============================================================================
 
-def load_cotas_csv(csv_path: str) -> Dict[str, Dict[str, Any]]:
+def load_cotas_file(file_path: str) -> Dict[str, Dict[str, Any]]:
     """
-    Carrega o arquivo CSV de forma de ingresso com as colunas:
-    matrícula, nome, ano-periodo ingresso, status, forma de ingresso, [data_nascimento].
-    Identifica automaticamente cotistas por palavras-chave.
+    Carrega o arquivo de cotistas / forma de ingresso em Excel (.xlsx/.xls) ou CSV (.csv).
+    Suporta dois formatos oficiais:
+    1) Planilha Consolidada de Cotistas FAMED (.xlsx com colunas Matrícula e Nome):
+       Todos os discentes presentes na lista são considerados Cotistas.
+    2) Exportação SIGAA (.csv com coluna Forma de Ingresso):
+       Identifica cotistas por palavras-chave na forma de ingresso.
+    Indexa tanto pela matrícula limpa quanto pelo nome normalizado (sem acentos/espaços extras).
     """
-    cotas_map = {}
-    if not os.path.exists(csv_path):
-        print(f"[AVISO] Arquivo CSV '{csv_path}' não encontrado. Cotas serão inferidas como Não-Cotista.")
+    cotas_map: Dict[str, Dict[str, Any]] = {}
+    if not file_path or not os.path.exists(file_path):
+        print(f"[AVISO] Arquivo de cotas '{file_path}' não encontrado. Cotas serão inferidas como Não-Cotista.")
         return cotas_map
 
-    # Palavras-chave indicativas de cota no sistema da UFPA
-    PALAVRAS_COTA = ['COTA', 'GRUPO', 'PPI', 'RENDA', 'PCD', 'QUILOMBOLA', 'INDÍGENA', 'INDIGENA',
-                     'PSEI', 'PSEQ', 'ESCOLA PUBLICA', 'ESCOLA PÚBLICA', 'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14']
+    PALAVRAS_COTA = [
+        'COTA', 'GRUPO', 'PPI', 'RENDA', 'PCD', 'QUILOMBOLA', 'INDÍGENA', 'INDIGENA',
+        'PSEI', 'PSEQ', 'ESCOLA PUBLICA', 'ESCOLA PÚBLICA',
+        'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14',
+    ]
 
-    # Tenta ler com separador vírgula ou ponto-e-vírgula
-    for sep in [';', ',', '\t']:
-        try:
-            df = pd.read_csv(csv_path, sep=sep, encoding='utf-8')
-            if len(df.columns) > 1:
-                break
-        except UnicodeDecodeError:
-            df = pd.read_csv(csv_path, sep=sep, encoding='latin1')
-            if len(df.columns) > 1:
-                break
+    ext = os.path.splitext(str(file_path).lower())[1]
+    df = None
+    if ext in ('.xlsx', '.xls'):
+        df = pd.read_excel(file_path)
+    else:
+        for sep in [';', ',', '\t']:
+            try:
+                df = pd.read_csv(file_path, sep=sep, encoding='utf-8')
+                if len(df.columns) > 1:
+                    break
+            except UnicodeDecodeError:
+                df = pd.read_csv(file_path, sep=sep, encoding='latin1')
+                if len(df.columns) > 1:
+                    break
+
+    if df is None or df.empty:
+        return cotas_map
 
     # Normalizar nomes das colunas
-    col_map = {}
+    col_map: Dict[str, Any] = {}
     for col in df.columns:
         c_clean = remove_accents(str(col)).strip().lower()
-        if 'matricula' in c_clean:
+        if 'matr' in c_clean:
             col_map['matricula'] = col
         elif 'nome' in c_clean:
             col_map['nome'] = col
-        elif 'ano' in c_clean or 'periodo' in c_clean or 'ingresso' in c_clean:
-            if 'forma' not in c_clean:
-                col_map['ano_periodo'] = col
         elif 'forma' in c_clean:
             col_map['forma_ingresso'] = col
+        elif 'ano' in c_clean or 'periodo' in c_clean or 'ingresso' in c_clean:
+            col_map['ano_periodo'] = col
         elif 'nasc' in c_clean:
             col_map['data_nascimento'] = col
 
-    for _, row in df.iterrows():
-        raw_mat = row.get(col_map.get('matricula', 'matrícula'), '')
-        mat = clean_matricula(raw_mat)
-        nome = str(row.get(col_map.get('nome', 'nome'), '')).strip()
-        ano_per = str(row.get(col_map.get('ano_periodo', 'ano-periodo ingresso'), '')).strip()
-        forma = str(row.get(col_map.get('forma_ingresso', 'forma de ingresso'), '')).strip()
-        data_nasc_raw = row.get(col_map.get('data_nascimento', 'data_nascimento'), None)
+    has_forma_col = 'forma_ingresso' in col_map
 
-        forma_upper = forma.upper()
-        is_cotista = any(kw in forma_upper for kw in PALAVRAS_COTA)
+    for _, row in df.iterrows():
+        raw_mat = row[col_map['matricula']] if 'matricula' in col_map else ''
+        mat = clean_matricula(raw_mat)
+        raw_nome = row[col_map['nome']] if 'nome' in col_map else ''
+        nome = '' if pd.isna(raw_nome) else str(raw_nome).strip()
+        if not mat and not nome:
+            continue
+
+        raw_ap = row[col_map['ano_periodo']] if 'ano_periodo' in col_map else ''
+        ano_per = '' if pd.isna(raw_ap) else str(raw_ap).strip()
+        data_nasc_raw = row[col_map['data_nascimento']] if 'data_nascimento' in col_map else None
+
+        if has_forma_col:
+            raw_forma = row[col_map['forma_ingresso']]
+            forma = '' if pd.isna(raw_forma) else str(raw_forma).strip()
+            is_cotista = any(kw in forma.upper() for kw in PALAVRAS_COTA)
+        else:
+            # Planilha consolidada exclusiva de cotistas (ex: Cotistas_FAMED_Consolidado.xlsx)
+            forma = 'Cotista (Lista Consolidada FAMED)'
+            is_cotista = True
 
         record = {
             'matricula': mat,
@@ -673,19 +801,27 @@ def load_cotas_csv(csv_path: str) -> Dict[str, Dict[str, Any]]:
             'ano_periodo': ano_per,
             'forma_ingresso': forma,
             'is_cotista': is_cotista,
-            'data_nascimento_raw': data_nasc_raw
+            'data_nascimento_raw': data_nasc_raw,
         }
         if mat:
             cotas_map[mat] = record
+        nome_norm = normalize_name(nome)
+        if nome_norm:
+            cotas_map[nome_norm] = record
         if nome:
             cotas_map[nome.lower()] = record
 
     return cotas_map
 
+def load_cotas_csv(csv_path: str) -> Dict[str, Dict[str, Any]]:
+    """Compatibilidade retroativa: delega para load_cotas_file (suporta .xlsx, .xls e .csv)."""
+    return load_cotas_file(csv_path)
+
 def load_students(excel_path: str, cotas_csv_path: Optional[str] = None, ref_year: int = 2026) -> List[Student]:
     """
     Lê o formulário de inscrições dos alunos, limpa e padroniza dados,
-    elimina envios duplicados mantendo o mais recente e enriquece com dados de cotas e ciclo.
+    ignora linhas em branco, elimina envios duplicados mantendo o mais recente
+    e enriquece com dados de cotas e ciclo.
     """
     if not os.path.exists(excel_path):
         raise FileNotFoundError(f"Arquivo de alunos não encontrado: {excel_path}")
@@ -703,10 +839,10 @@ def load_students(excel_path: str, cotas_csv_path: Optional[str] = None, ref_yea
     col_crg = None
 
     for col in df.columns:
-        c_low = col.lower()
+        c_low = str(col).lower()
         if 'carimbo' in c_low or 'timestamp' in c_low or 'data/hora' in c_low:
             col_timestamp = col
-        elif 'nome completo' in c_low:
+        elif 'nome completo' in c_low or (c_low.strip() == 'nome'):
             col_nome = col
         elif 'matrícula' in c_low or 'matricula' in c_low:
             col_mat = col
@@ -721,26 +857,37 @@ def load_students(excel_path: str, cotas_csv_path: Optional[str] = None, ref_yea
         elif 'crg' in c_low:
             col_crg = col
 
-    # Ordenar por timestamp e desduplicar por matrícula mantendo o último envio
+    # Ordenar por timestamp antes da desduplicação
     if col_timestamp:
-        df[col_timestamp] = pd.to_datetime(df[col_timestamp])
+        df[col_timestamp] = pd.to_datetime(df[col_timestamp], errors='coerce')
         df = df.sort_values(col_timestamp)
 
-    if col_mat:
-        df['mat_clean_temp'] = df[col_mat].apply(clean_matricula)
-        # Se matricula for vazia, desduplica pelo nome
-        df = df.drop_duplicates(subset=['mat_clean_temp'], keep='last')
-    elif col_nome:
-        df = df.drop_duplicates(subset=[col_nome], keep='last')
+    # Descartar linhas fantasma sem nome nem matrícula
+    df['mat_clean_temp'] = df[col_mat].apply(clean_matricula) if col_mat else ''
+    df['nome_norm_temp'] = df[col_nome].apply(normalize_name) if col_nome else ''
+    df = df[(df['mat_clean_temp'] != '') | (df['nome_norm_temp'] != '')].copy()
 
-    cotas_map = load_cotas_csv(cotas_csv_path) if cotas_csv_path else {}
+    if col_mat:
+        mask_mat = df['mat_clean_temp'] != ''
+        df_com_mat = df[mask_mat].drop_duplicates(subset=['mat_clean_temp'], keep='last')
+        df_sem_mat = df[~mask_mat]
+        df = pd.concat([df_com_mat, df_sem_mat]).sort_values(col_timestamp) if col_timestamp else pd.concat([df_com_mat, df_sem_mat])
+    if col_nome:
+        mask_nome = df['nome_norm_temp'] != ''
+        df_com_nome = df[mask_nome].drop_duplicates(subset=['nome_norm_temp'], keep='last')
+        df_sem_nome = df[~mask_nome]
+        df = pd.concat([df_com_nome, df_sem_nome]).sort_values(col_timestamp) if col_timestamp else pd.concat([df_com_nome, df_sem_nome])
+
+    cotas_map = load_cotas_file(cotas_csv_path) if cotas_csv_path else {}
 
     students = []
     for _, row in df.iterrows():
         raw_mat = row[col_mat] if col_mat else ''
         mat = clean_matricula(raw_mat)
-        nome = str(row[col_nome]).strip() if col_nome else ''
-        email = str(row[col_email]).strip().lower() if col_email else ''
+        raw_nome = row[col_nome] if col_nome else ''
+        nome = '' if pd.isna(raw_nome) else " ".join(str(raw_nome).split())
+        raw_email = row[col_email] if col_email else ''
+        email = '' if pd.isna(raw_email) else str(raw_email).strip().lower()
         tel = clean_phone(row[col_tel]) if col_tel else ''
         crg = clean_crg(row[col_crg]) if col_crg else 0.0
         
@@ -754,14 +901,19 @@ def load_students(excel_path: str, cotas_csv_path: Optional[str] = None, ref_yea
             ts = datetime.datetime.now()
 
         # Obter dados de ingresso / cotas
-        cotas_info = cotas_map.get(mat) or cotas_map.get(nome.lower(), {})
+        nome_norm = normalize_name(nome)
+        cotas_info = cotas_map.get(mat) or cotas_map.get(nome_norm) or cotas_map.get(nome.lower(), {})
         is_cotista = cotas_info.get('is_cotista', False)
         forma_ingresso = cotas_info.get('forma_ingresso', 'Ampla Concorrência')
 
-        # Determinar ano de ingresso
+        # Determinar ano de ingresso (recupera da lista oficial se houver erro de digitação)
         ano_ingresso = ref_year
-        if mat and len(mat) >= 4 and mat[:4].isdigit():
-            y = int(mat[:4])
+        mat_ref = mat
+        cotista_mat = cotas_info.get('matricula', '')
+        if (not mat or len(mat) != 12 or not (mat[:4].isdigit() and 1990 <= int(mat[:4]) <= ref_year)) and cotista_mat and len(cotista_mat) >= 4:
+            mat_ref = cotista_mat
+        if mat_ref and len(mat_ref) >= 4 and mat_ref[:4].isdigit():
+            y = int(mat_ref[:4])
             if 1990 <= y <= ref_year:
                 ano_ingresso = y
         elif 'ano_periodo' in cotas_info and cotas_info['ano_periodo']:
@@ -769,8 +921,6 @@ def load_students(excel_path: str, cotas_csv_path: Optional[str] = None, ref_yea
             if ap_match:
                 ano_ingresso = int(ap_match.group(1))
 
-        # Semestre estimado no programa de medicina (2 semestres por ano)
-        # Se edital é 2026.1:
         semestre_estimado = max(1, min(12, (ref_year - ano_ingresso) * 2 + 1))
         ciclo = determine_cycle(semestre_estimado)
 

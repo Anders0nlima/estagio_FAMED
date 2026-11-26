@@ -39,12 +39,15 @@ from classificador import (
     clean_crg,
     clean_matricula,
     clean_phone,
+    normalize_name,
     parse_option_id,
     parse_option_list,
     parse_birth_date,
     guess_gender,
     determine_cycle,
     parse_semestres_permitidos,
+    parse_opportunities_docx,
+    load_cotas_file,
     OPORTUNIDADES_CANONICAS,
     allocate_opportunity,
     sort_candidates,
@@ -58,18 +61,74 @@ from classificador import (
 # 1. IMPORTAÇÃO E AUDITORIA DO SEMÁFORO
 # =============================================================================
 
+def _resolve_edital_file(file_field, default_candidates: List[str]) -> Optional[str]:
+    """Resolve o caminho de arquivo enviado no edital ou recorre aos arquivos padrão em teste_fluxo."""
+    if file_field:
+        try:
+            if file_field.path and os.path.exists(file_field.path):
+                return file_field.path
+        except ValueError:
+            pass
+    for rel_path in default_candidates:
+        abs_path = os.path.join(settings.BASE_DIR, rel_path) if not os.path.isabs(rel_path) else rel_path
+        if os.path.exists(abs_path):
+            return abs_path
+    return None
+
+def _estimar_semestre_candidato(edital: Edital, ano_ingresso: int, max_sem_edital: int) -> int:
+    """
+    Estima o semestre letivo do estudante com base no ano de ingresso e no período do edital.
+    - Editais de férias de virada de ano (Jan/Fev, ex: 2027.1 após 2026.4) usam semestres pares: (ano - ingresso) * 2.
+    - Editais de meio de ano (Jul/Ago, ex: 2026.1 Julho) usam semestres ímpares: (ano - ingresso) * 2 + 1.
+    """
+    ref_txt = f"{edital.titulo} {edital.semestre}".lower()
+    is_meio_ano = any(k in ref_txt for k in ['jul', 'ago', '.2', '.3'])
+    if is_meio_ano:
+        raw_sem = (edital.ano - ano_ingresso) * 2 + 1
+    elif any(k in ref_txt for k in ['jan', 'fev', 'dez', '.4']) or edital.ano >= 2027:
+        raw_sem = (edital.ano - ano_ingresso) * 2
+    else:
+        raw_sem = (edital.ano - ano_ingresso) * 2 + 1
+
+    max_cap = 11 if max_sem_edital <= 11 else 12
+    return max(1, min(max_cap, raw_sem))
+
 def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
-    """Importa as planilhas de vagas, alunos e CSV de cotas para o banco de dados."""
+    """
+    Importa o documento de oportunidades (.docx ou .xlsx), a planilha de inscrições (.xlsx)
+    e a planilha de cotistas / forma de ingresso (.xlsx ou .csv) para o banco de dados.
+    """
     edital.oportunidades.all().delete()
     edital.candidatos.all().delete()
     edital.resultados.all().delete()
     edital.logs.all().delete()
 
+    # 1. Carregamento das Oportunidades (padrão .docx organizado pelo Diretor)
+    vagas_path = _resolve_edital_file(
+        edital.arquivo_vagas,
+        [
+            os.path.join('teste_fluxo', 'Estagio_de_Ferias_FAMED_2027_Candidatura.docx'),
+            'vagas_professores.xlsx',
+        ]
+    )
+    vagas_source = OPORTUNIDADES_CANONICAS
+    if vagas_path and str(vagas_path).lower().endswith('.docx'):
+        parsed_ops = parse_opportunities_docx(vagas_path)
+        if not parsed_ops:
+            raise ValueError(
+                "Não foi possível extrair oportunidades do documento Word (.docx). "
+                "Verifique se cada oferta segue o padrão '1) Local – Docente responsável: ... Vagas: ... Perfil do(a) estudante: ...'."
+            )
+        vagas_source = parsed_ops
+
     vagas_map = {}
-    for op in OPORTUNIDADES_CANONICAS:
+    max_sem_edital = 1
+    for op in vagas_source:
         sems = op.get('semestres_permitidos')
         if not sems:
             sems = parse_semestres_permitidos(",".join(op['ciclos_permitidos']))
+        if sems:
+            max_sem_edital = max(max_sem_edital, max(sems))
         sems_str = ",".join(str(x) for x in sems)
         obj = Oportunidade.objects.create(
             edital=edital,
@@ -84,55 +143,26 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         )
         vagas_map[op['id']] = obj
 
-    cotas_dict = {}
-    csv_path = edital.arquivo_ingresso.path if edital.arquivo_ingresso else 'forma_ingresso.csv'
-    if not os.path.exists(csv_path) and os.path.exists('forma_ingresso.csv'):
-        csv_path = 'forma_ingresso.csv'
+    # 2. Carregamento dos Cotistas / Forma de Ingresso (padrão .xlsx consolidado ou .csv legado)
+    cotas_path = _resolve_edital_file(
+        edital.arquivo_ingresso,
+        [
+            os.path.join('teste_fluxo', 'Cotistas_FAMED_Consolidado.xlsx'),
+            'forma_ingresso.csv',
+        ]
+    )
+    cotas_dict = load_cotas_file(cotas_path) if cotas_path else {}
 
-    PALAVRAS_COTA = ['COTA', 'GRUPO', 'PPI', 'RENDA', 'PCD', 'QUILOMBOLA', 'INDÍGENA', 'INDIGENA',
-                     'PSEI', 'PSEQ', 'ESCOLA PUBLICA', 'ESCOLA PÚBLICA', 'L1', 'L2', 'L5', 'L6', 'L9', 'L10', 'L13', 'L14']
-
-    if os.path.exists(csv_path):
-        for sep in [';', ',', '\t']:
-            try:
-                df_csv = pd.read_csv(csv_path, sep=sep, encoding='utf-8')
-                if len(df_csv.columns) > 1:
-                    break
-            except UnicodeDecodeError:
-                df_csv = pd.read_csv(csv_path, sep=sep, encoding='latin1')
-                if len(df_csv.columns) > 1:
-                    break
-
-        col_mat_csv = None
-        col_nome_csv = None
-        col_forma_csv = None
-        col_nasc_csv = None
-        for c in df_csv.columns:
-            c_low = str(c).lower()
-            if 'matr' in c_low:
-                col_mat_csv = c
-            elif 'nome' in c_low:
-                col_nome_csv = c
-            elif 'forma' in c_low:
-                col_forma_csv = c
-            elif 'nasc' in c_low:
-                col_nasc_csv = c
-
-        for _, r in df_csv.iterrows():
-            m = clean_matricula(r[col_mat_csv]) if col_mat_csv else ''
-            n = str(r[col_nome_csv]).strip() if col_nome_csv else ''
-            f = str(r[col_forma_csv]).strip() if col_forma_csv else 'Ampla Concorrência'
-            dn = r[col_nasc_csv] if col_nasc_csv else None
-            is_c = any(kw in f.upper() for kw in PALAVRAS_COTA)
-            rec = {'forma': f, 'is_cotista': is_c, 'data_nasc': dn}
-            if m:
-                cotas_dict[m] = rec
-            if n:
-                cotas_dict[n.lower()] = rec
-
-    alunos_path = edital.arquivo_alunos.path if edital.arquivo_alunos else 'inscricoes_alunos.xlsx'
-    if not os.path.exists(alunos_path) and os.path.exists('inscricoes_alunos.xlsx'):
-        alunos_path = 'inscricoes_alunos.xlsx'
+    # 3. Carregamento e higienização das inscrições dos alunos (.xlsx)
+    alunos_path = _resolve_edital_file(
+        edital.arquivo_alunos,
+        [
+            os.path.join('teste_fluxo', 'Estágio de Férias FAMED Jan-Fev 2027 (respostas).xlsx'),
+            'inscricoes_alunos.xlsx',
+        ]
+    )
+    if not alunos_path:
+        raise FileNotFoundError("Planilha de inscrições dos alunos não encontrada.")
 
     df_alunos = pd.read_excel(alunos_path)
     
@@ -147,10 +177,10 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
     col_link = None
 
     for col in df_alunos.columns:
-        c_low = col.lower()
+        c_low = str(col).lower()
         if 'carimbo' in c_low or 'timestamp' in c_low or 'data/hora' in c_low:
             col_timestamp = col
-        elif 'nome completo' in c_low:
+        elif 'nome completo' in c_low or (c_low.strip() == 'nome'):
             col_nome = col
         elif 'matrícula' in c_low or 'matricula' in c_low:
             col_mat = col
@@ -167,27 +197,55 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         elif 'anexe' in c_low or 'histórico' in c_low or 'historico' in c_low:
             col_link = col
 
+    if not col_nome and not col_mat:
+        raise ValueError("A planilha de alunos não possui colunas reconhecíveis de Nome ou Matrícula.")
+
     if col_timestamp:
-        df_alunos[col_timestamp] = pd.to_datetime(df_alunos[col_timestamp])
+        df_alunos[col_timestamp] = pd.to_datetime(df_alunos[col_timestamp], errors='coerce')
         df_alunos = df_alunos.sort_values(col_timestamp)
 
+    # Descartar linhas fantasma/vazias sem nome nem matrícula
+    total_bruto = len(df_alunos)
+    df_alunos['mat_clean_temp'] = df_alunos[col_mat].apply(clean_matricula) if col_mat else ''
+    df_alunos['nome_norm_temp'] = df_alunos[col_nome].apply(normalize_name) if col_nome else ''
+    df_alunos = df_alunos[(df_alunos['mat_clean_temp'] != '') | (df_alunos['nome_norm_temp'] != '')].copy()
+    ignorados_vazios = total_bruto - len(df_alunos)
+
+    # Dupla desduplicação mantendo o envio mais recente (primeiro por matrícula, depois por nome normalizado)
     if col_mat:
-        df_alunos['mat_clean_temp'] = df_alunos[col_mat].apply(clean_matricula)
-        df_alunos = df_alunos.drop_duplicates(subset=['mat_clean_temp'], keep='last')
+        mask_mat = df_alunos['mat_clean_temp'] != ''
+        df_com_mat = df_alunos[mask_mat].drop_duplicates(subset=['mat_clean_temp'], keep='last')
+        df_sem_mat = df_alunos[~mask_mat]
+        df_alunos = pd.concat([df_com_mat, df_sem_mat])
+        if col_timestamp:
+            df_alunos = df_alunos.sort_values(col_timestamp)
+
+    if col_nome:
+        mask_nome = df_alunos['nome_norm_temp'] != ''
+        df_com_nome = df_alunos[mask_nome].drop_duplicates(subset=['nome_norm_temp'], keep='last')
+        df_sem_nome = df_alunos[~mask_nome]
+        df_alunos = pd.concat([df_com_nome, df_sem_nome])
+        if col_timestamp:
+            df_alunos = df_alunos.sort_values(col_timestamp)
 
     total_importados = 0
     verdes = 0
     amarelos = 0
     vermelhos = 0
+    tem_coluna_crg = (col_crg is not None)
 
     for _, row in df_alunos.iterrows():
         raw_mat = row[col_mat] if col_mat else ''
         mat = clean_matricula(raw_mat)
-        nome = str(row[col_nome]).strip() if col_nome else ''
-        email = str(row[col_email]).strip().lower() if col_email else ''
+        raw_nome = row[col_nome] if col_nome else ''
+        nome = '' if pd.isna(raw_nome) else " ".join(str(raw_nome).split())
+        raw_email = row[col_email] if col_email else ''
+        email = '' if pd.isna(raw_email) else str(raw_email).strip().lower()
         tel = clean_phone(row[col_tel]) if col_tel else ''
-        raw_crg = str(row[col_crg]).strip() if col_crg else ''
-        link = str(row[col_link]).strip() if col_link else ''
+        raw_crg_val = row[col_crg] if col_crg else None
+        raw_crg = '' if (raw_crg_val is None or pd.isna(raw_crg_val)) else str(raw_crg_val).strip()
+        raw_link = row[col_link] if col_link else None
+        link = '' if (raw_link is None or pd.isna(raw_link)) else str(raw_link).strip()
         
         op1 = parse_option_id(row[col_op1]) if col_op1 else '1'
         op2_list = parse_option_list(row[col_op2]) if col_op2 else []
@@ -199,43 +257,85 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
         elif timezone.is_naive(ts):
             ts = timezone.make_aware(ts)
 
-        crg_calculado = clean_crg(raw_crg)
-        status_semaforo = 'VERDE'
-        motivo = 'CRG consistente e validado automaticamente.'
-
-        if any(t in raw_crg.lower() for t in ['não tenho', 'nao tenho', 'não possuo', 'cursando 1º', 'sem crg']):
-            status_semaforo = 'VERMELHO'
-            motivo = 'Aluno em 1º semestre / sem nota no SIGAA (CRG preliminar 0.0).'
-            vermelhos += 1
-        elif '(' in raw_crg or len(raw_crg.split()) > 2:
-            status_semaforo = 'VERMELHO'
-            motivo = f'Texto explicativo inserido no campo de nota: "{raw_crg[:45]}..."'
-            vermelhos += 1
-        elif raw_crg.isdigit() and len(raw_crg) >= 4 and float(raw_crg) > 10.0:
-            status_semaforo = 'AMARELO'
-            motivo = f'Nota digitada sem vírgula/ponto ({raw_crg}), ajustada para {crg_calculado:.4f}.'
-            amarelos += 1
-        elif ',' in raw_crg:
-            status_semaforo = 'AMARELO'
-            motivo = f'Nota informada com vírgula ({raw_crg}), padronizada para {crg_calculado:.4f}.'
-            amarelos += 1
-        else:
-            verdes += 1
-
-        cotas_info = cotas_dict.get(mat) or cotas_dict.get(nome.lower(), {})
+        # Cruzamento com planilha de cotistas (por matrícula ou nome normalizado sem acentos)
+        nome_norm = normalize_name(nome)
+        cotas_info = cotas_dict.get(mat) or cotas_dict.get(nome_norm) or cotas_dict.get(nome.lower(), {})
         is_cotista = cotas_info.get('is_cotista', False)
-        forma_ingresso = cotas_info.get('forma', 'Ampla Concorrência')
+        forma_ingresso = cotas_info.get('forma_ingresso', 'Ampla Concorrência')
 
+        # Determinação do ano de ingresso (e correção caso haja erro de digitação na matrícula)
         ano_ingresso = edital.ano
-        if mat and len(mat) >= 4 and mat[:4].isdigit():
-            y = int(mat[:4])
-            if 1990 <= y <= edital.ano:
-                ano_ingresso = y
-        
-        semestre_estimado = max(1, min(12, (edital.ano - ano_ingresso) * 2 + 1))
+        mat_valida_ano = bool(mat and len(mat) >= 4 and mat[:4].isdigit() and 1990 <= int(mat[:4]) <= edital.ano)
+        mat_atipica = not (mat and len(mat) >= 10 and mat_valida_ano)
+        obs_matricula = ""
+
+        cotista_mat = cotas_info.get('matricula', '')
+        if cotista_mat and len(cotista_mat) >= 4 and cotista_mat[:4].isdigit() and (mat_atipica or (mat != cotista_mat)):
+            # Se cruzou por nome porque o aluno errou a matrícula no Forms, usa a matrícula oficial da lista consolidada
+            obs_matricula = f" Matrícula corrigida pela lista de cotistas ({mat or 'vazia'} -> {cotista_mat})."
+            mat = cotista_mat
+            mat_valida_ano = True
+            mat_atipica = False
+
+        if mat_valida_ano:
+            ano_ingresso = int(mat[:4])
+        elif cotas_info.get('ano_periodo'):
+            ap_match = re.search(r'(\d{4})', str(cotas_info['ano_periodo']))
+            if ap_match:
+                ano_ingresso = int(ap_match.group(1))
+
+        if not mat:
+            mat = f"PEND-{total_importados + 1:03d}"
+            mat_atipica = True
+
+        # Semestre estimado & Ciclo
+        semestre_estimado = _estimar_semestre_candidato(edital, ano_ingresso, max_sem_edital)
         ciclo = determine_cycle(semestre_estimado)
-        data_nasc = parse_birth_date(cotas_info.get('data_nasc'), ano_ingresso)
+        data_nasc = parse_birth_date(cotas_info.get('data_nascimento_raw') or cotas_info.get('data_nasc'), ano_ingresso)
         genero = guess_gender(nome)
+
+        # Avaliação no Semáforo de Auditoria
+        if not tem_coluna_crg:
+            crg_digitado_display = "Não informado no Forms"
+            crg_calculado = 0.0
+            status_semaforo = 'VERMELHO'
+            motivo = 'Formulário sem campo de CRG — abrir "Ver PDF" do histórico anexo e informar nota oficial.'
+            if mat_atipica:
+                motivo += ' Matrícula atípica/incompleta: conferir também o semestre no PDF.'
+            elif obs_matricula:
+                motivo += obs_matricula
+            vermelhos += 1
+        else:
+            crg_digitado_display = raw_crg
+            crg_calculado = clean_crg(raw_crg)
+            status_semaforo = 'VERDE'
+            motivo = 'CRG consistente e validado automaticamente.'
+
+            if any(t in raw_crg.lower() for t in ['não tenho', 'nao tenho', 'não possuo', 'cursando 1º', 'sem crg']) or not raw_crg:
+                status_semaforo = 'VERMELHO'
+                motivo = 'Aluno sem CRG informado no Forms (CRG preliminar 0.0).'
+                vermelhos += 1
+            elif '(' in raw_crg or len(raw_crg.split()) > 2:
+                status_semaforo = 'VERMELHO'
+                motivo = f'Texto explicativo inserido no campo de nota: "{raw_crg[:45]}..."'
+                vermelhos += 1
+            elif raw_crg.isdigit() and len(raw_crg) >= 4 and float(raw_crg) > 10.0:
+                status_semaforo = 'AMARELO'
+                motivo = f'Nota digitada sem vírgula/ponto ({raw_crg}), ajustada para {crg_calculado:.4f}.'
+                amarelos += 1
+            elif ',' in raw_crg:
+                status_semaforo = 'AMARELO'
+                motivo = f'Nota informada com vírgula ({raw_crg}), padronizada para {crg_calculado:.4f}.'
+                amarelos += 1
+            elif mat_atipica:
+                status_semaforo = 'VERMELHO'
+                motivo = 'Matrícula atípica/incompleta: conferir histórico anexo.'
+                vermelhos += 1
+            else:
+                verdes += 1
+
+            if obs_matricula:
+                motivo += obs_matricula
 
         Candidato.objects.create(
             edital=edital,
@@ -243,11 +343,11 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
             nome=nome,
             email=email,
             telefone=tel,
-            crg_digitado=raw_crg,
+            crg_digitado=crg_digitado_display,
             crg_oficial=crg_calculado,
             link_historico=link,
             status_auditoria=status_semaforo,
-            motivo_auditoria=motivo,
+            motivo_auditoria=motivo.strip(),
             auditado_pelo_diretor=(status_semaforo == 'VERDE'),
             op1=op1 or '1',
             op2=op2_str,
@@ -267,6 +367,9 @@ def importar_planilhas_edital(edital: Edital) -> Dict[str, Any]:
 
     return {
         'total': total_importados,
+        'oportunidades': len(vagas_map),
+        'ignorados_vazios': ignorados_vazios,
+        'tem_coluna_crg': tem_coluna_crg,
         'verdes': verdes,
         'amarelos': amarelos,
         'vermelhos': vermelhos,
@@ -293,6 +396,312 @@ def confirmar_todas_pendencias(edital: Edital) -> int:
     edital.status = 'AUDITADO'
     edital.save()
     return count
+
+def extrair_dados_historico_pdf(pdf_bytes: bytes, filename: str = "") -> Dict[str, Any]:
+    """
+    Extrai Matrícula, Nome e CRG da página inicial de um histórico acadêmico PDF do SIGAA/UFPA.
+    Retorna ok=False caso o PDF seja imagem escaneada sem texto selecionável ou ilegível.
+    """
+    from io import BytesIO
+    texto_paginas = []
+
+    try:
+        import fitz
+        with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
+            for i in range(min(2, len(doc))):
+                t = doc[i].get_text("text") or ""
+                if t.strip():
+                    texto_paginas.append(t)
+    except Exception:
+        texto_paginas = []
+
+    if not texto_paginas:
+        try:
+            import pypdf
+            reader = pypdf.PdfReader(BytesIO(pdf_bytes))
+            for i in range(min(2, len(reader.pages))):
+                t = reader.pages[i].extract_text() or ""
+                if t.strip():
+                    texto_paginas.append(t)
+        except Exception:
+            texto_paginas = []
+
+    texto = "\n".join(texto_paginas).strip()
+    if not texto:
+        return {'ok': False, 'motivo': 'PDF sem texto selecionável (imagem/escaneado).'}
+
+    # 1. Extração da Matrícula (no texto do SIGAA ou fallback no nome do arquivo)
+    mat = ''
+    m_mat = re.search(r'Matr[íi]cula\s*:\s*(\d{6,15})', texto, re.IGNORECASE)
+    if m_mat:
+        mat = clean_matricula(m_mat.group(1))
+    elif filename:
+        m_fn = re.search(r'\b((?:19|20)\d{8,10})\b', filename)
+        if m_fn:
+            mat = clean_matricula(m_fn.group(1))
+
+    # 2. Extração do Nome no histórico SIGAA (linha anterior a "Nome:" ou na mesma linha)
+    nome = ''
+    lines = [ln.strip() for ln in texto.splitlines() if ln.strip()]
+    for idx, ln in enumerate(lines):
+        m_same = re.match(r'^Nome\s*:\s*(.+)$', ln, re.IGNORECASE)
+        if m_same and m_same.group(1).strip():
+            nome = m_same.group(1).strip()
+            break
+        if re.match(r'^Nome\s*:?$', ln, re.IGNORECASE) and idx > 0:
+            prev = lines[idx - 1]
+            if not any(k in prev.lower() for k in ['proeg', 'ciac', 'histórico', 'emitido', 'dados']):
+                nome = prev
+                break
+
+    # 3. Extração do CRG (ex: "CRG: 4.9765" ou "CRG: 8,5000")
+    crg_val: Optional[float] = None
+    m_crg = re.search(r'\bCRG\s*:\s*(\d+(?:[\.,]\d+)?)', texto, re.IGNORECASE)
+    if not m_crg:
+        m_crg = re.search(r'Coeficiente\s+de\s+Rendimento\s+Geral\s*:?\s*(\d+(?:[\.,]\d+)?)', texto, re.IGNORECASE)
+    if m_crg:
+        try:
+            val = float(m_crg.group(1).replace(',', '.'))
+            if 0.0 <= val <= 10.0:
+                crg_val = round(val, 4)
+        except ValueError:
+            crg_val = None
+
+    return {
+        'ok': True,
+        'matricula': mat,
+        'nome': nome,
+        'crg': crg_val,
+        'texto_norm': normalize_name(texto),
+    }
+
+def importar_crgs_historicos_zip_ou_pdfs(edital: Edital, uploaded_files: List[Any]) -> Dict[str, Any]:
+    """
+    Processa um arquivo .zip (baixado do Google Drive) ou múltiplos .pdf de históricos do SIGAA,
+    casa cada arquivo com o respectivo candidato pela Matrícula ou Nome e atualiza o CRG oficial.
+    """
+    candidatos = list(edital.candidatos.all())
+    cand_by_mat = {clean_matricula(c.matricula): c for c in candidatos if c.matricula}
+    cand_by_nome = {normalize_name(c.nome): c for c in candidatos if c.nome}
+
+    pdfs_para_ler: List[Tuple[str, bytes]] = []
+    imagens_ignoradas = 0
+
+    for f in uploaded_files:
+        fname = getattr(f, 'name', '') or ''
+        ext = os.path.splitext(fname.lower())[1]
+        raw_bytes = f.read()
+
+        if ext == '.zip':
+            from io import BytesIO
+            with zipfile.ZipFile(BytesIO(raw_bytes)) as zf:
+                for info in zf.infolist():
+                    if info.is_dir():
+                        continue
+                    inner_name = info.filename
+                    base_inner = os.path.basename(inner_name)
+                    if not base_inner or base_inner.startswith('.') or '__MACOSX' in inner_name:
+                        continue
+                    inner_ext = os.path.splitext(base_inner.lower())[1]
+                    if inner_ext == '.pdf':
+                        pdfs_para_ler.append((base_inner, zf.read(info.filename)))
+                    elif inner_ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.heic'):
+                        imagens_ignoradas += 1
+        elif ext == '.pdf':
+            pdfs_para_ler.append((os.path.basename(fname), raw_bytes))
+        elif ext in ('.jpg', '.jpeg', '.png', '.webp', '.bmp', '.heic'):
+            imagens_ignoradas += 1
+
+    atualizados = 0
+    sem_texto_ou_crg = 0
+    nao_casados = 0
+
+    for fname, pdf_bytes in pdfs_para_ler:
+        dados = extrair_dados_historico_pdf(pdf_bytes, filename=fname)
+        if not dados.get('ok') or dados.get('crg') is None:
+            sem_texto_ou_crg += 1
+            continue
+
+        cand = None
+        if dados.get('matricula'):
+            cand = cand_by_mat.get(dados['matricula'])
+        if not cand and dados.get('nome'):
+            cand = cand_by_nome.get(normalize_name(dados['nome']))
+        if not cand and dados.get('texto_norm'):
+            texto_norm = dados['texto_norm']
+            for nome_norm, c_obj in cand_by_nome.items():
+                if nome_norm and nome_norm in texto_norm:
+                    cand = c_obj
+                    break
+
+        if not cand:
+            nao_casados += 1
+            continue
+
+        crg = dados['crg']
+        _aplicar_crg_extraido(cand, crg, f"histórico PDF ({fname})")
+        atualizados += 1
+
+    if edital.pendencias_auditoria_count == 0 and atualizados > 0:
+        edital.status = 'AUDITADO'
+        edital.save()
+
+    return {
+        'pdfs_lidos': len(pdfs_para_ler),
+        'atualizados': atualizados,
+        'sem_texto_ou_crg': sem_texto_ou_crg,
+        'nao_casados': nao_casados,
+        'imagens_ignoradas': imagens_ignoradas,
+    }
+
+def _aplicar_crg_extraido(cand: Candidato, crg: float, origem: str) -> None:
+    """Atualiza e valida o candidato no banco após extração bem-sucedida do CRG."""
+    cand.crg_oficial = crg
+    if not cand.crg_digitado or cand.crg_digitado == "Não informado no Forms":
+        cand.crg_digitado = f"PDF: {crg:.4f}"
+    cand.status_auditoria = 'VERDE'
+    cand.auditado_pelo_diretor = True
+    cand.motivo_auditoria = f"CRG {crg:.4f} extraído automaticamente de {origem}."
+    cand.save()
+
+def _extract_gdrive_file_id(url: str) -> Optional[str]:
+    """Extrai o ID do arquivo a partir de qualquer URL padrão do Google Drive."""
+    if not url:
+        return None
+    for pat in [r'[?&]id=([a-zA-Z0-9_-]+)', r'/file/d/([a-zA-Z0-9_-]+)', r'/d/([a-zA-Z0-9_-]+)']:
+        m = re.search(pat, str(url).strip())
+        if m:
+            return m.group(1)
+    return None
+
+def _download_gdrive_pdf_bytes(url: str, session=None) -> Dict[str, Any]:
+    """
+    Baixa em memória um arquivo compartilhado por link no Google Drive (ou URL direta de PDF).
+    Identifica se o arquivo está restrito (login Google), se é uma imagem ou um PDF válido.
+    """
+    import requests
+
+    sess = session or requests.Session()
+    file_id = _extract_gdrive_file_id(url)
+    target_url = f"https://drive.google.com/uc?export=download&id={file_id}" if file_id else str(url).strip()
+
+    try:
+        resp = sess.get(target_url, timeout=20, allow_redirects=True)
+    except Exception as exc:
+        return {'ok': False, 'reason': 'erro_rede', 'detail': str(exc)}
+
+    if resp.status_code in (401, 403):
+        return {'ok': False, 'reason': 'restrito'}
+    if resp.status_code >= 400:
+        return {'ok': False, 'reason': 'erro_rede', 'detail': f'HTTP {resp.status_code}'}
+
+    ctype = (resp.headers.get('Content-Type') or '').lower()
+    content = resp.content or b''
+
+    # Caso o Google Drive exiba tela de confirmação de download para arquivo grande
+    if 'text/html' in ctype and file_id and b'confirm=' in content and b'accounts.google.com' not in resp.url.encode():
+        m_conf = re.search(r'confirm=([0-9A-Za-z_]+)', content.decode('utf-8', errors='ignore'))
+        if m_conf:
+            try:
+                resp = sess.get(f"{target_url}&confirm={m_conf.group(1)}", timeout=20, allow_redirects=True)
+                ctype = (resp.headers.get('Content-Type') or '').lower()
+                content = resp.content or b''
+            except Exception as exc:
+                return {'ok': False, 'reason': 'erro_rede', 'detail': str(exc)}
+
+    if content.startswith(b'%PDF') or 'application/pdf' in ctype:
+        return {'ok': True, 'bytes': content}
+    if ctype.startswith('image/'):
+        return {'ok': False, 'reason': 'imagem'}
+    if 'text/html' in ctype or 'accounts.google.com' in str(resp.url):
+        return {'ok': False, 'reason': 'restrito'}
+
+    return {'ok': False, 'reason': 'nao_pdf'}
+
+def importar_crgs_dos_links_drive(edital: Edital, max_workers: int = 10) -> Dict[str, Any]:
+    """
+    Percorre em paralelo os links do Google Drive de todos os candidatos pendentes do edital,
+    baixa os PDFs em memória (quando compartilhados com 'Qualquer pessoa com o link'),
+    extrai o CRG oficial do SIGAA e valida cada candidato automaticamente.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from django.db import transaction
+    import requests
+
+    pendentes = list(
+        edital.candidatos.filter(auditado_pelo_diretor=False)
+        .exclude(link_historico='')
+        .exclude(link_historico__isnull=True)
+    )
+
+    if not pendentes:
+        return {
+            'total_links': 0,
+            'atualizados': 0,
+            'restritos': 0,
+            'imagens': 0,
+            'sem_texto_ou_crg': 0,
+            'erros_rede': 0,
+        }
+
+    def _processar_um(cand_id: int, url: str) -> Tuple[int, Dict[str, Any]]:
+        with requests.Session() as sess:
+            dl = _download_gdrive_pdf_bytes(url, session=sess)
+        if not dl.get('ok'):
+            return cand_id, {'ok': False, 'reason': dl.get('reason', 'erro_rede')}
+        dados = extrair_dados_historico_pdf(dl['bytes'])
+        if not dados.get('ok') or dados.get('crg') is None:
+            return cand_id, {'ok': False, 'reason': 'sem_texto_ou_crg'}
+        return cand_id, {'ok': True, 'crg': dados['crg']}
+
+    resultados: Dict[int, Dict[str, Any]] = {}
+    workers = min(max_workers, max(1, len(pendentes)))
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_processar_um, c.id, c.link_historico) for c in pendentes]
+        for fut in as_completed(futures):
+            c_id, info = fut.result()
+            resultados[c_id] = info
+
+    cand_map = {c.id: c for c in pendentes}
+    atualizados = 0
+    restritos = 0
+    imagens = 0
+    sem_texto_ou_crg = 0
+    erros_rede = 0
+
+    with transaction.atomic():
+        for c_id, info in resultados.items():
+            cand = cand_map[c_id]
+            if info.get('ok'):
+                _aplicar_crg_extraido(cand, info['crg'], "link do Google Drive")
+                atualizados += 1
+            else:
+                reason = info.get('reason')
+                if reason == 'restrito':
+                    restritos += 1
+                elif reason in ('imagem', 'nao_pdf'):
+                    imagens += 1
+                    cand.motivo_auditoria = "Anexo enviado não é PDF selecionável (foto/imagem) — conferir via 'Ver PDF'."
+                    cand.save(update_fields=['motivo_auditoria'])
+                elif reason == 'sem_texto_ou_crg':
+                    sem_texto_ou_crg += 1
+                    cand.motivo_auditoria = "PDF sem texto ou CRG não identificado — conferir via 'Ver PDF'."
+                    cand.save(update_fields=['motivo_auditoria'])
+                else:
+                    erros_rede += 1
+
+    if edital.pendencias_auditoria_count == 0 and atualizados > 0:
+        edital.status = 'AUDITADO'
+        edital.save()
+
+    return {
+        'total_links': len(pendentes),
+        'atualizados': atualizados,
+        'restritos': restritos,
+        'imagens': imagens,
+        'sem_texto_ou_crg': sem_texto_ou_crg,
+        'erros_rede': erros_rede,
+    }
 
 
 # =============================================================================

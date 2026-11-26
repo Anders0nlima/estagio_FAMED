@@ -88,6 +88,40 @@
         </a>
     </div>
 
+    {% if sem_crg_forms and pendencias_count > 0 %}
+    <div class="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex flex-col lg:flex-row lg:items-center justify-between gap-4 text-xs text-amber-900">
+        <div class="flex items-start space-x-3">
+            <span class="text-base leading-none mt-0.5">🔗</span>
+            <div>
+                <p class="font-bold">Ler CRGs direto dos Links do Google Drive (sem baixar arquivo)</p>
+                <p class="text-amber-800 mt-0.5 leading-relaxed">
+                    <b>1.</b> No Google Drive, compartilhe a pasta dos históricos como <b>"Qualquer pessoa com o link (Leitor)"</b>.<br>
+                    <b>2.</b> Clique no botão ao lado para extrair todos os CRGs automaticamente. <b>3.</b> Ao terminar, volte a pasta para <b>"Restrito"</b>.
+                </p>
+            </div>
+        </div>
+        <form method="POST" action="{% url 'extrair_crg_links' edital.id %}" class="shrink-0">
+            {% csrf_token %}
+            <button type="submit" class="bg-[#086419] hover:bg-[#00420c] text-white font-bold px-4 py-2.5 rounded-xl shadow-sm transition whitespace-nowrap cursor-pointer">
+                Ler CRGs direto dos Links
+            </button>
+        </form>
+    </div>
+    {% else %}
+    <div class="bg-slate-50 border border-slate-200 rounded-2xl p-3.5 flex flex-col lg:flex-row lg:items-center justify-between gap-3 text-xs text-slate-700">
+        <div>
+            <span class="font-bold text-slate-800">Leitura automática de Históricos SIGAA:</span>
+            <span class="text-slate-500">Leia os CRGs diretamente pelos links do formulário compartilhados no Google Drive.</span>
+        </div>
+        <form method="POST" action="{% url 'extrair_crg_links' edital.id %}" class="shrink-0">
+            {% csrf_token %}
+            <button type="submit" class="bg-[#086419] hover:bg-[#00420c] text-white font-semibold px-4 py-2 rounded-xl shadow-2xs transition whitespace-nowrap cursor-pointer">
+                Ler CRGs direto dos Links
+            </button>
+        </form>
+    </div>
+    {% endif %}
+
     <!-- Tabela de Candidatos com Busca Rápida -->
     <div class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         <div class="px-6 py-4 border-b border-slate-100 bg-slate-50 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
@@ -177,8 +211,15 @@
 
                         <!-- Ciclo e Opções -->
                         <td class="px-5 py-3.5">
-                            <span class="block text-slate-700 font-medium">Ciclo {{ c.ciclo|title }} ({{ c.semestre }}º Semestre)</span>
-                            <span class="block text-slate-400">1ª Opção: {{ c.op1 }} | 2ª Opção: {{ c.op2|default:"-" }}</span>
+                            <div class="flex items-center space-x-1.5">
+                                <span class="text-slate-700 font-medium">Ciclo {{ c.ciclo|title }}</span>
+                                <span class="text-slate-400">•</span>
+                                <input type="number" form="form-cand-{{ c.id }}" name="semestre" value="{{ c.semestre }}" min="1" max="12"
+                                    class="w-12 px-1.5 py-0.5 border border-slate-300 rounded font-mono text-[11px] font-bold text-slate-700 bg-white focus:ring-2 focus:ring-[#086419] focus:outline-none"
+                                    title="Semestre do candidato (editável)">
+                                <span class="text-slate-500 text-[11px]">º sem</span>
+                            </div>
+                            <span class="block text-slate-400 mt-0.5">1ª Opção: {{ c.op1 }} | 2ª Opção: {{ c.op2|default:"-" }}</span>
                         </td>
 
                         <!-- CRG Digitado no Forms -->
@@ -190,26 +231,26 @@
                         </td>
 
                         <!-- Formulário de Homologação do CRG -->
-                        <form method="POST" action="{% url 'confirmar_candidato' c.id %}">
-                            {% csrf_token %}
-                            <td class="px-5 py-3.5">
+                        <td class="px-5 py-3.5">
+                            <form id="form-cand-{{ c.id }}" method="POST" action="{% url 'confirmar_candidato' c.id %}" class="inline">
+                                {% csrf_token %}
                                 <input type="number" step="0.0001" min="0" max="10" name="crg_oficial" value="{{ c.crg_oficial_dot }}"
                                     class="w-24 px-2.5 py-1 border rounded-lg font-mono text-xs font-bold focus:ring-2 focus:ring-[#086419] focus:outline-none transition {% if not c.auditado_pelo_diretor %}bg-amber-50 border-amber-300 text-amber-900{% else %}bg-emerald-50/70 border-emerald-300 text-[#00420c]{% endif %}"
                                     title="Nota oficial a ser considerada na classificação">
-                            </td>
+                            </form>
+                        </td>
 
-                            <td class="px-5 py-3.5 text-right whitespace-nowrap space-x-1.5">
-                                {% if c.link_historico %}
-                                <a href="{{ c.link_historico }}" target="_blank" class="inline-flex items-center px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 font-medium transition text-[11px] border border-slate-300 shadow-2xs" title="Abrir histórico anexado no Forms">
-                                    Ver PDF
-                                </a>
-                                {% endif %}
+                        <td class="px-5 py-3.5 text-right whitespace-nowrap space-x-1.5">
+                            {% if c.link_historico %}
+                            <a href="{{ c.link_historico }}" target="_blank" class="inline-flex items-center px-2.5 py-1 rounded-lg bg-white hover:bg-slate-100 text-slate-700 font-medium transition text-[11px] border border-slate-300 shadow-2xs" title="Abrir histórico anexado no Forms">
+                                Ver PDF
+                            </a>
+                            {% endif %}
 
-                                <button type="submit" class="inline-flex items-center px-3 py-1 rounded-lg bg-[#086419] hover:bg-[#00420c] text-white font-medium transition text-[11px] shadow-2xs cursor-pointer" title="Homologar este CRG">
-                                    Confirmar
-                                </button>
-                            </td>
-                        </form>
+                            <button type="submit" form="form-cand-{{ c.id }}" class="inline-flex items-center px-3 py-1 rounded-lg bg-[#086419] hover:bg-[#00420c] text-white font-medium transition text-[11px] shadow-2xs cursor-pointer" title="Homologar este CRG">
+                                Confirmar
+                            </button>
+                        </td>
                     </tr>
                     {% empty %}
                     <tr>

@@ -11,6 +11,8 @@ def login_required(view_func):
 from .models import Edital, Oportunidade, Candidato, Resultado, LogDecisao
 from .services import (
     importar_planilhas_edital,
+    importar_crgs_historicos_zip_ou_pdfs,
+    importar_crgs_dos_links_drive,
     confirmar_auditoria_candidato,
     confirmar_todas_pendencias,
     executar_classificacao_edital,
@@ -149,12 +151,27 @@ def upload_planilhas_view(request, edital_id):
             edital.arquivo_ingresso = f_ingresso
         edital.save()
 
-        res = importar_planilhas_edital(edital)
-        messages.success(
-            request,
-            f"Dados importados com sucesso! {res['total']} estudantes processados "
-            f"({res['verdes']} validados automaticamente, {res['amarelos']} com divergência e {res['vermelhos']} necessitando revisão)."
-        )
+        try:
+            res = importar_planilhas_edital(edital)
+        except Exception as exc:
+            messages.error(request, f"Erro ao processar os arquivos enviados: {exc}")
+            return redirect('upload_planilhas', edital_id=edital.id)
+
+        msg_extra = f" ({res['ignorados_vazios']} linha(s) em branco ignorada(s))." if res.get('ignorados_vazios') else ""
+        if not res.get('tem_coluna_crg', True):
+            messages.success(
+                request,
+                f"Dados importados com sucesso! {res['oportunidades']} oportunidades extraídas e "
+                f"{res['total']} estudantes processados{msg_extra}. "
+                f"Como o formulário não possui coluna de CRG, todos os {res['vermelhos']} candidatos "
+                f"estão listados na auditoria com o botão 'Ver PDF' para conferência da nota."
+            )
+        else:
+            messages.success(
+                request,
+                f"Dados importados com sucesso! {res['oportunidades']} oportunidades e {res['total']} estudantes processados{msg_extra} "
+                f"({res['verdes']} validados automaticamente, {res['amarelos']} com divergência e {res['vermelhos']} necessitando revisão)."
+            )
         return redirect('auditoria_semaforo', edital_id=edital.id)
 
     return render(request, 'estagios/upload_planilhas.html', {'edital': edital})
@@ -194,6 +211,8 @@ def auditoria_semaforo_view(request, edital_id):
             Q(email__icontains=q)
         )
 
+    sem_crg_forms = candidatos_qs.filter(crg_digitado="Não informado no Forms").exists()
+
     return render(request, 'estagios/auditoria_semaforo.html', {
         'edital': edital,
         'candidatos': candidatos,
@@ -204,6 +223,7 @@ def auditoria_semaforo_view(request, edital_id):
         'amarelos_count': amarelos_count,
         'vermelhos_count': vermelhos_count,
         'pendencias_count': pendencias_count,
+        'sem_crg_forms': sem_crg_forms,
     })
 
 @login_required
@@ -211,11 +231,17 @@ def confirmar_candidato_view(request, candidato_id):
     candidato = get_object_or_404(Candidato, id=candidato_id)
     if request.method == 'POST':
         novo_crg = request.POST.get('crg_oficial', '').strip()
+        novo_sem = request.POST.get('semestre', '').strip()
+        if novo_sem.isdigit() and 1 <= int(novo_sem) <= 12:
+            from classificador import determine_cycle
+            candidato.semestre = int(novo_sem)
+            candidato.ciclo = determine_cycle(candidato.semestre)
+            candidato.save()
         if novo_crg:
             try:
                 val = float(novo_crg.replace(',', '.'))
                 confirmar_auditoria_candidato(candidato, val)
-                messages.success(request, f"Nota de {candidato.nome} homologada com sucesso: {candidato.crg_oficial:.4f}")
+                messages.success(request, f"Dados de {candidato.nome} homologados com sucesso (CRG {candidato.crg_oficial:.4f}, {candidato.semestre}º sem).")
             except ValueError:
                 messages.error(request, f"Valor de CRG inválido informado: '{novo_crg}'.")
         else:
@@ -231,6 +257,87 @@ def homologar_todas_pendencias_view(request, edital_id):
     edital = get_object_or_404(Edital, id=edital_id)
     qtd = confirmar_todas_pendencias(edital)
     messages.success(request, f"Todas as {qtd} pendências de auditoria foram homologadas com sucesso!")
+    return redirect('auditoria_semaforo', edital_id=edital.id)
+
+@login_required
+def extrair_crg_links_view(request, edital_id):
+    """Lê diretamente dos links do Google Drive (compartilhados por link) o CRG dos históricos pendentes."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        try:
+            res = importar_crgs_dos_links_drive(edital)
+        except Exception as exc:
+            messages.error(request, f"Erro ao consultar os links do Google Drive: {exc}")
+            return redirect('auditoria_semaforo', edital_id=edital.id)
+
+        if res['total_links'] == 0:
+            messages.info(request, "Não há candidatos pendentes com link de histórico para ler.")
+            return redirect('auditoria_semaforo', edital_id=edital.id)
+
+        detalhes = []
+        if res['restritos']:
+            detalhes.append(f"{res['restritos']} link(s) bloqueado(s)/restrito(s) no Google Drive")
+        if res['imagens']:
+            detalhes.append(f"{res['imagens']} foto(s)/imagem(ns) mantida(s) em Revisão")
+        if res['sem_texto_ou_crg']:
+            detalhes.append(f"{res['sem_texto_ou_crg']} PDF(s) sem texto/CRG legível")
+        if res['erros_rede']:
+            detalhes.append(f"{res['erros_rede']} falha(s) de conexão")
+
+        msg_extra = f" ({'; '.join(detalhes)})." if detalhes else "."
+        if res['atualizados'] > 0:
+            messages.success(
+                request,
+                f"CRG lido direto dos links para {res['atualizados']} de {res['total_links']} candidato(s){msg_extra} "
+                f"Lembre-se de voltar a pasta do Google Drive para 'Restrito' após concluir."
+            )
+        elif res['restritos'] > 0:
+            messages.error(
+                request,
+                f"O Google Drive bloqueou o acesso aos links ({res['restritos']} restrito(s)). "
+                f"Compartilhe a pasta de anexos do Forms no Drive como 'Qualquer pessoa com o link (Leitor)' e tente novamente."
+            )
+        else:
+            messages.warning(
+                request,
+                f"Nenhum CRG foi extraído automaticamente dos {res['total_links']} link(s){msg_extra}"
+            )
+    return redirect('auditoria_semaforo', edital_id=edital.id)
+
+@login_required
+def importar_crg_historicos_view(request, edital_id):
+    """Recebe um .zip (ou múltiplos .pdf) de históricos do SIGAA e extrai o CRG para cada aluno."""
+    edital = get_object_or_404(Edital, id=edital_id)
+    if request.method == 'POST':
+        arquivos = request.FILES.getlist('arquivos_historicos')
+        if not arquivos:
+            messages.error(request, "Selecione um arquivo .zip ou arquivos .pdf dos históricos antes de extrair.")
+            return redirect('auditoria_semaforo', edital_id=edital.id)
+        try:
+            res = importar_crgs_historicos_zip_ou_pdfs(edital, arquivos)
+        except Exception as exc:
+            messages.error(request, f"Erro ao processar os históricos enviados: {exc}")
+            return redirect('auditoria_semaforo', edital_id=edital.id)
+
+        detalhes = []
+        if res['sem_texto_ou_crg']:
+            detalhes.append(f"{res['sem_texto_ou_crg']} PDF(s) sem texto/CRG legível")
+        if res['imagens_ignoradas']:
+            detalhes.append(f"{res['imagens_ignoradas']} imagem(ns) mantida(s) para revisão manual")
+        if res['nao_casados']:
+            detalhes.append(f"{res['nao_casados']} arquivo(s) sem correspondência na lista de inscritos")
+
+        msg_extra = f" ({'; '.join(detalhes)})." if detalhes else "."
+        if res['atualizados'] > 0:
+            messages.success(
+                request,
+                f"CRG extraído e validado automaticamente para {res['atualizados']} de {res['pdfs_lidos']} PDF(s) lido(s){msg_extra}"
+            )
+        else:
+            messages.warning(
+                request,
+                f"Nenhum candidato foi atualizado a partir dos {res['pdfs_lidos']} PDF(s) lido(s){msg_extra}"
+            )
     return redirect('auditoria_semaforo', edital_id=edital.id)
 
 @login_required

@@ -606,3 +606,205 @@ def test_salvar_carga_horaria_em_lote():
     finally:
         edital.delete()
 
+
+def test_parse_opportunities_docx_padrao_2027():
+    """Valida a extração automática das 21 oportunidades a partir do documento .docx do Diretor."""
+    import os
+    from classificador import parse_opportunities_docx
+
+    docx_path = os.path.join("teste_fluxo", "Estagio_de_Ferias_FAMED_2027_Candidatura.docx")
+    ops = parse_opportunities_docx(docx_path)
+
+    assert len(ops) == 21
+    assert sum(op["vagas_total"] for op in ops) == 60
+    assert ops[0]["id"] == "1"
+    assert ops[0]["professor"] == "Lucas Lobato Acatauassu Nunes"
+    assert ops[0]["semestres_permitidos"] == [9, 10, 11]
+    assert ops[6]["id"] == "7"
+    assert ops[6]["semestres_permitidos"] == [7, 8]
+    assert ops[20]["id"] == "21"
+    assert ops[20]["professor"] == "Cyane Costa"
+
+
+def test_load_cotas_file_excel_consolidado():
+    """Valida o carregamento da planilha consolidada de cotistas (.xlsx) com busca por matrícula e nome."""
+    import os
+    from classificador import load_cotas_file, normalize_name
+
+    xlsx_path = os.path.join("teste_fluxo", "Cotistas_FAMED_Consolidado.xlsx")
+    cotas = load_cotas_file(xlsx_path)
+
+    assert "202209740050" in cotas
+    assert cotas["202209740050"]["is_cotista"] is True
+    assert normalize_name("Aluizio Ramos Pereira neto ") in cotas
+    assert cotas[normalize_name("Aluizio Ramos Pereira neto ")]["matricula"] == "202209740154"
+
+
+def test_importacao_novos_arquivos_padrao_2027():
+    """Valida a importação conjunta dos 3 novos arquivos padrão (docx vagas, xlsx alunos sem CRG, xlsx cotistas)."""
+    import os
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    django.setup()
+
+    from estagios.models import Edital
+    from estagios.services import importar_planilhas_edital
+
+    edital = Edital.objects.create(
+        titulo="Estágio de Férias FAMED - Janeiro e Fevereiro de 2027",
+        semestre="2027.1",
+        ano=2027,
+    )
+    try:
+        res = importar_planilhas_edital(edital)
+        assert res["oportunidades"] == 21
+        assert res["ignorados_vazios"] == 5
+        assert res["tem_coluna_crg"] is False
+        assert res["vermelhos"] == res["total"]
+
+        # Sem candidatos fantasma e sem duplicatas por erro de matrícula (ex: Ageu, Aluizio, Erik)
+        assert not edital.candidatos.filter(nome__iexact="none").exists()
+        assert edital.candidatos.filter(nome__icontains="Aluizio Ramos Pereira").count() == 1
+        assert edital.candidatos.filter(nome__icontains="Ageu Salgado Santos").count() == 1
+        assert edital.candidatos.filter(nome__icontains="Erik Renan da Silva Pina").count() == 1
+
+        # Cotistas identificados e matrícula corrigida quando necessário (ex: Gustavo Sales Andreatta)
+        gustavo = edital.candidatos.get(nome__icontains="Gustavo Sales Andreatta")
+        assert gustavo.is_cotista is True
+        assert gustavo.matricula == "202309740046"
+        assert gustavo.semestre == 8
+    finally:
+        edital.delete()
+
+
+def test_extrair_dados_historico_pdf_sigaa():
+    """Valida a extração automática de Matrícula, Nome e CRG do PDF real do SIGAA."""
+    import os
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    django.setup()
+
+    from estagios.services import extrair_dados_historico_pdf
+
+    pdf_path = os.path.join("teste_fluxo", "historico_201909740072 (1) - Allyson Santos.pdf")
+    with open(pdf_path, "rb") as f:
+        dados = extrair_dados_historico_pdf(f.read(), filename=os.path.basename(pdf_path))
+
+    assert dados["ok"] is True
+    assert dados["matricula"] == "201909740072"
+    assert dados["nome"] == "ALLYSON MICHEL MIRANDA SANTOS"
+    assert dados["crg"] == 4.9765
+
+
+def test_importar_crgs_historicos_zip():
+    """Valida o processamento em lote de um .zip com histórico PDF do SIGAA e uma imagem ignorada."""
+    import os
+    import zipfile
+    from io import BytesIO
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    django.setup()
+
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from estagios.models import Edital
+    from estagios.services import importar_planilhas_edital, importar_crgs_historicos_zip_ou_pdfs
+
+    edital = Edital.objects.create(
+        titulo="Estágio de Férias FAMED - Teste PDF ZIP",
+        semestre="2027.1",
+        ano=2027,
+    )
+    try:
+        importar_planilhas_edital(edital)
+
+        pdf_path = os.path.join("teste_fluxo", "historico_201909740072 (1) - Allyson Santos.pdf")
+        zip_buf = BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.write(pdf_path, arcname="historico_201909740072 (1) - Allyson Santos.pdf")
+            zf.writestr("foto_celular_aluno.jpg", b"fake-jpeg-bytes")
+
+        zip_file = SimpleUploadedFile("historicos.zip", zip_buf.getvalue(), content_type="application/zip")
+        res = importar_crgs_historicos_zip_ou_pdfs(edital, [zip_file])
+
+        assert res["pdfs_lidos"] == 1
+        assert res["atualizados"] == 1
+        assert res["imagens_ignoradas"] == 1
+
+        allyson = edital.candidatos.get(matricula="201909740072")
+        assert allyson.crg_oficial == 4.9765
+        assert allyson.status_auditoria == "VERDE"
+        assert allyson.auditado_pelo_diretor is True
+    finally:
+        edital.delete()
+
+
+def test_importar_crgs_dos_links_drive():
+    """
+    Testa a extração paralela a partir de links do Google Drive:
+    - Link aberto retornando PDF do SIGAA: preenche CRG e valida (Verde)
+    - Link restrito (HTML de login): contabiliza como restrito sem travar
+    - Link com imagem/foto: contabiliza imagem e mantém em Revisão
+    """
+    import os
+    from unittest.mock import patch
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    django.setup()
+
+    from estagios.models import Edital, Candidato
+    from estagios.services import _extract_gdrive_file_id, importar_crgs_dos_links_drive
+
+    assert _extract_gdrive_file_id("https://drive.google.com/open?id=1jrdSU8SzNf0-gruDZiTIdzuCFe5cF_yT") == "1jrdSU8SzNf0-gruDZiTIdzuCFe5cF_yT"
+    assert _extract_gdrive_file_id("https://drive.google.com/file/d/ABC_123-xyz/view?usp=sharing") == "ABC_123-xyz"
+
+    pdf_path = os.path.join("teste_fluxo", "historico_201909740072 (1) - Allyson Santos.pdf")
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    edital = Edital.objects.create(titulo="Edital Teste Links Drive", semestre="2027.1", ano=2027)
+    try:
+        c_ok = Candidato.objects.create(
+            edital=edital, matricula="201909740072", nome="Allyson Santos",
+            crg_digitado="Não informado no Forms", crg_oficial=0.0,
+            status_auditoria="VERMELHO", auditado_pelo_diretor=False,
+            op1="3", link_historico="https://drive.google.com/open?id=ID_OK"
+        )
+        c_rest = Candidato.objects.create(
+            edital=edital, matricula="202300000001", nome="Aluno Restrito",
+            crg_digitado="Não informado no Forms", crg_oficial=0.0,
+            status_auditoria="VERMELHO", auditado_pelo_diretor=False,
+            op1="8", link_historico="https://drive.google.com/open?id=ID_RESTRITO"
+        )
+        c_img = Candidato.objects.create(
+            edital=edital, matricula="202300000002", nome="Aluno Foto",
+            crg_digitado="Não informado no Forms", crg_oficial=0.0,
+            status_auditoria="VERMELHO", auditado_pelo_diretor=False,
+            op1="8", link_historico="https://drive.google.com/open?id=ID_IMAGEM"
+        )
+
+        def fake_download(url, session=None):
+            if "ID_OK" in url:
+                return {"ok": True, "bytes": pdf_bytes}
+            if "ID_RESTRITO" in url:
+                return {"ok": False, "reason": "restrito"}
+            return {"ok": False, "reason": "imagem"}
+
+        with patch("estagios.services._download_gdrive_pdf_bytes", side_effect=fake_download):
+            res = importar_crgs_dos_links_drive(edital)
+
+        assert res["total_links"] == 3
+        assert res["atualizados"] == 1
+        assert res["restritos"] == 1
+        assert res["imagens"] == 1
+
+        c_ok.refresh_from_db()
+        c_rest.refresh_from_db()
+        c_img.refresh_from_db()
+        assert c_ok.crg_oficial == 4.9765
+        assert c_ok.status_auditoria == "VERDE"
+        assert c_ok.auditado_pelo_diretor is True
+        assert c_rest.status_auditoria == "VERMELHO"
+        assert c_img.status_auditoria == "VERMELHO"
+    finally:
+        edital.delete()
+

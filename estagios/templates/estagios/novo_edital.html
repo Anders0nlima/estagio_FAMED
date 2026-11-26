@@ -27,20 +27,20 @@
             <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div class="sm:col-span-2">
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Título do Edital</label>
-                    <input type="text" name="titulo" required value="{{ edital.titulo|default:'Estágio de Férias FAMED 2026.1 / JULHO 2026' }}"
+                    <input type="text" name="titulo" required value="{{ edital.titulo|default:'Estágio de Férias FAMED - Janeiro e Fevereiro de 2027' }}"
                         class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Semestre / Período</label>
-                    <input type="text" name="semestre" required value="{{ edital.semestre|default:'2026.1' }}"
-                        placeholder="Ex: 2026.1 ou JULHO 2026"
+                    <input type="text" name="semestre" required value="{{ edital.semestre|default:'2027.1' }}"
+                        placeholder="Ex: 2027.1 ou Jan-Fev 2027"
                         class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
                 <div>
                     <label class="block text-xs font-semibold text-slate-700 uppercase mb-1">Ano de Referência</label>
-                    <input type="number" name="ano" required value="{{ edital.ano|default:2026 }}" min="2020" max="2035"
+                    <input type="number" name="ano" required value="{{ edital.ano|default:2027 }}" min="2020" max="2035"
                         class="w-full px-3.5 py-2.5 rounded-lg border border-slate-300 focus:ring-2 focus:ring-[#086419] focus:outline-none text-sm transition">
                 </div>
 
