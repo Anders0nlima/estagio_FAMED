@@ -159,13 +159,45 @@ def upload_planilhas_view(request, edital_id):
 
         msg_extra = f" ({res['ignorados_vazios']} linha(s) em branco ignorada(s))." if res.get('ignorados_vazios') else ""
         if not res.get('tem_coluna_crg', True):
-            messages.success(
-                request,
-                f"Dados importados com sucesso! {res['oportunidades']} oportunidades extraídas e "
-                f"{res['total']} estudantes processados{msg_extra}. "
-                f"Como o formulário não possui coluna de CRG, todos os {res['vermelhos']} candidatos "
-                f"estão listados na auditoria com o botão 'Ver PDF' para conferência da nota."
-            )
+            res_links = None
+            try:
+                if edital.candidatos.filter(auditado_pelo_diretor=False).exclude(link_historico='').exists():
+                    res_links = importar_crgs_dos_links_drive(edital)
+            except Exception:
+                res_links = None
+
+            if res_links and res_links.get('atualizados', 0) > 0:
+                pend_restantes = edital.pendencias_auditoria_count
+                detalhes = []
+                if res_links.get('imagens'):
+                    detalhes.append(f"{res_links['imagens']} foto(s)/imagem(ns) para conferência")
+                if res_links.get('sem_texto_ou_crg'):
+                    detalhes.append(f"{res_links['sem_texto_ou_crg']} PDF(s) sem texto/CRG")
+                if res_links.get('nao_processados_tempo'):
+                    detalhes.append(f"{res_links['nao_processados_tempo']} restante(s) — clique no botão para finalizar")
+                det_txt = f" ({'; '.join(detalhes)})" if detalhes else ""
+                messages.success(
+                    request,
+                    f"Dados importados e {res_links['atualizados']} de {res['total']} CRG(s) extraídos automaticamente dos históricos!{msg_extra} "
+                    f"Oportunidades: {res['oportunidades']}. Pendências restantes: {pend_restantes}{det_txt}."
+                )
+            elif res_links and res_links.get('restritos', 0) > 0:
+                messages.success(
+                    request,
+                    f"Dados importados! {res['oportunidades']} oportunidades e {res['total']} estudantes processados{msg_extra}."
+                )
+                messages.warning(
+                    request,
+                    f"Os links do Google Drive estão restritos ({res_links['restritos']}). "
+                    f"Compartilhe a pasta dos históricos como 'Qualquer pessoa com o link (Leitor)' e clique em 'Ler CRGs direto dos Links'."
+                )
+            else:
+                messages.success(
+                    request,
+                    f"Dados importados com sucesso! {res['oportunidades']} oportunidades extraídas e "
+                    f"{res['total']} estudantes processados{msg_extra}. "
+                    f"Use o botão 'Ler CRGs direto dos Links' (ou 'Ver PDF') para preencher os CRGs."
+                )
         else:
             messages.success(
                 request,
@@ -283,6 +315,8 @@ def extrair_crg_links_view(request, edital_id):
             detalhes.append(f"{res['sem_texto_ou_crg']} PDF(s) sem texto/CRG legível")
         if res['erros_rede']:
             detalhes.append(f"{res['erros_rede']} falha(s) de conexão")
+        if res.get('nao_processados_tempo'):
+            detalhes.append(f"{res['nao_processados_tempo']} restante(s) — clique novamente no botão para continuar")
 
         msg_extra = f" ({'; '.join(detalhes)})." if detalhes else "."
         if res['atualizados'] > 0:

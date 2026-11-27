@@ -808,3 +808,54 @@ def test_importar_crgs_dos_links_drive():
     finally:
         edital.delete()
 
+
+def test_upload_planilhas_view_extrai_crgs_automaticamente():
+    """
+    Valida que ao enviar as planilhas sem coluna de CRG, a view já dispara
+    a extração automática dos links do Google Drive antes mesmo de abrir a auditoria.
+    """
+    import os
+    from unittest.mock import patch
+    import django
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    django.setup()
+
+    from django.test import Client
+    from django.core.files.uploadedfile import SimpleUploadedFile
+    from estagios.models import Edital
+
+    pdf_path = os.path.join("teste_fluxo", "historico_201909740072 (1) - Allyson Santos.pdf")
+    with open(pdf_path, "rb") as f:
+        pdf_bytes = f.read()
+
+    edital = Edital.objects.create(titulo="Edital Teste Auto CRG Upload", semestre="2027.1", ano=2027)
+    try:
+        allyson_url = "https://drive.google.com/open?id=1jrdSU8SzNf0-gruDZiTIdzuCFe5cF_yT"
+        def fake_dl(url, session=None):
+            # Retorna o PDF válido do Allyson quando encontrar a matrícula/link do Allyson na planilha
+            return {"ok": True, "bytes": pdf_bytes} if "18kSS93SxZEGxTPRCrglmHiJrStTz4V8-" not in url else {"ok": False, "reason": "imagem"}
+
+        vagas_path = os.path.join("teste_fluxo", "Estagio_de_Ferias_FAMED_2027_Candidatura.docx")
+        alunos_path = os.path.join("teste_fluxo", "Estágio de Férias FAMED Jan-Fev 2027 (respostas).xlsx")
+        cotas_path = os.path.join("teste_fluxo", "Cotistas_FAMED_Consolidado.xlsx")
+
+        with open(vagas_path, "rb") as fv, open(alunos_path, "rb") as fa, open(cotas_path, "rb") as fc:
+            with patch("estagios.services._download_gdrive_pdf_bytes", side_effect=fake_dl):
+                res = Client().post(
+                    f"/edital/{edital.id}/upload/",
+                    {
+                        "arquivo_vagas": SimpleUploadedFile("vagas.docx", fv.read()),
+                        "arquivo_alunos": SimpleUploadedFile("alunos.xlsx", fa.read()),
+                        "arquivo_ingresso": SimpleUploadedFile("cotas.xlsx", fc.read()),
+                    },
+                    follow=False,
+                )
+
+        assert res.status_code == 302
+        allyson = edital.candidatos.get(matricula="201909740072")
+        assert allyson.crg_oficial == 4.9765
+        assert allyson.status_auditoria == "VERDE"
+        assert allyson.auditado_pelo_diretor is True
+    finally:
+        edital.delete()
+

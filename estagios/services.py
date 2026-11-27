@@ -404,27 +404,37 @@ def extrair_dados_historico_pdf(pdf_bytes: bytes, filename: str = "") -> Dict[st
     """
     from io import BytesIO
     texto_paginas = []
+    lib_disponivel = False
 
     try:
         import fitz
+        lib_disponivel = True
         with fitz.open(stream=pdf_bytes, filetype="pdf") as doc:
             for i in range(min(2, len(doc))):
                 t = doc[i].get_text("text") or ""
                 if t.strip():
                     texto_paginas.append(t)
+    except ImportError:
+        pass
     except Exception:
         texto_paginas = []
 
     if not texto_paginas:
         try:
             import pypdf
+            lib_disponivel = True
             reader = pypdf.PdfReader(BytesIO(pdf_bytes))
             for i in range(min(2, len(reader.pages))):
                 t = reader.pages[i].extract_text() or ""
                 if t.strip():
                     texto_paginas.append(t)
+        except ImportError:
+            pass
         except Exception:
             texto_paginas = []
+
+    if not lib_disponivel:
+        raise RuntimeError("Nenhuma biblioteca de leitura de PDF (pymupdf ou pypdf) está instalada no servidor.")
 
     texto = "\n".join(texto_paginas).strip()
     if not texto:
@@ -586,7 +596,7 @@ def _download_gdrive_pdf_bytes(url: str, session=None) -> Dict[str, Any]:
     target_url = f"https://drive.google.com/uc?export=download&id={file_id}" if file_id else str(url).strip()
 
     try:
-        resp = sess.get(target_url, timeout=20, allow_redirects=True)
+        resp = sess.get(target_url, timeout=18, allow_redirects=True)
     except Exception as exc:
         return {'ok': False, 'reason': 'erro_rede', 'detail': str(exc)}
 
@@ -603,7 +613,7 @@ def _download_gdrive_pdf_bytes(url: str, session=None) -> Dict[str, Any]:
         m_conf = re.search(r'confirm=([0-9A-Za-z_]+)', content.decode('utf-8', errors='ignore'))
         if m_conf:
             try:
-                resp = sess.get(f"{target_url}&confirm={m_conf.group(1)}", timeout=20, allow_redirects=True)
+                resp = sess.get(f"{target_url}&confirm={m_conf.group(1)}", timeout=18, allow_redirects=True)
                 ctype = (resp.headers.get('Content-Type') or '').lower()
                 content = resp.content or b''
             except Exception as exc:
@@ -618,15 +628,20 @@ def _download_gdrive_pdf_bytes(url: str, session=None) -> Dict[str, Any]:
 
     return {'ok': False, 'reason': 'nao_pdf'}
 
-def importar_crgs_dos_links_drive(edital: Edital, max_workers: int = 10) -> Dict[str, Any]:
+def importar_crgs_dos_links_drive(edital: Edital, max_workers: int = 12, time_budget_seconds: Optional[float] = None) -> Dict[str, Any]:
     """
     Percorre em paralelo os links do Google Drive de todos os candidatos pendentes do edital,
     baixa os PDFs em memória (quando compartilhados com 'Qualquer pessoa com o link'),
     extrai o CRG oficial do SIGAA e valida cada candidato automaticamente.
     """
+    import time
+    import threading
     from concurrent.futures import ThreadPoolExecutor, as_completed
     from django.db import transaction
     import requests
+
+    if time_budget_seconds is None:
+        time_budget_seconds = 24.0 if os.environ.get('RENDER') else 120.0
 
     pendentes = list(
         edital.candidatos.filter(auditado_pelo_diretor=False)
@@ -642,10 +657,24 @@ def importar_crgs_dos_links_drive(edital: Edital, max_workers: int = 10) -> Dict
             'imagens': 0,
             'sem_texto_ou_crg': 0,
             'erros_rede': 0,
+            'nao_processados_tempo': 0,
         }
 
+    thread_local = threading.local()
+    sessions_criadas = []
+
+    def _get_thread_session():
+        if not hasattr(thread_local, 'session'):
+            s = requests.Session()
+            thread_local.session = s
+            sessions_criadas.append(s)
+        return thread_local.session
+
     def _processar_um(cand_id: int, url: str) -> Tuple[int, Dict[str, Any]]:
-        with requests.Session() as sess:
+        sess = _get_thread_session()
+        dl = _download_gdrive_pdf_bytes(url, session=sess)
+        if not dl.get('ok') and dl.get('reason') == 'erro_rede':
+            time.sleep(0.3)
             dl = _download_gdrive_pdf_bytes(url, session=sess)
         if not dl.get('ok'):
             return cand_id, {'ok': False, 'reason': dl.get('reason', 'erro_rede')}
@@ -656,11 +685,32 @@ def importar_crgs_dos_links_drive(edital: Edital, max_workers: int = 10) -> Dict
 
     resultados: Dict[int, Dict[str, Any]] = {}
     workers = min(max_workers, max(1, len(pendentes)))
-    with ThreadPoolExecutor(max_workers=workers) as executor:
-        futures = [executor.submit(_processar_um, c.id, c.link_historico) for c in pendentes]
-        for fut in as_completed(futures):
-            c_id, info = fut.result()
-            resultados[c_id] = info
+    deadline = time.monotonic() + time_budget_seconds
+
+    futures = {}
+    executor = ThreadPoolExecutor(max_workers=workers)
+    try:
+        futures = {executor.submit(_processar_um, c.id, c.link_historico): c.id for c in pendentes}
+        try:
+            for fut in as_completed(futures, timeout=max(1.0, time_budget_seconds)):
+                c_id, info = fut.result()
+                resultados[c_id] = info
+                if time.monotonic() >= deadline:
+                    break
+        except TimeoutError:
+            pass
+    finally:
+        for fut in futures:
+            if not fut.done():
+                fut.cancel()
+        executor.shutdown(wait=False, cancel_futures=True)
+        for s in sessions_criadas:
+            try:
+                s.close()
+            except Exception:
+                pass
+
+    nao_processados_tempo = max(0, len(pendentes) - len(resultados))
 
     cand_map = {c.id: c for c in pendentes}
     atualizados = 0
@@ -701,6 +751,7 @@ def importar_crgs_dos_links_drive(edital: Edital, max_workers: int = 10) -> Dict
         'imagens': imagens,
         'sem_texto_ou_crg': sem_texto_ou_crg,
         'erros_rede': erros_rede,
+        'nao_processados_tempo': nao_processados_tempo,
     }
 
 
