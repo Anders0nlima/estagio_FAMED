@@ -14,6 +14,7 @@ urlpatterns = [
     path('edital/<int:edital_id>/importar-crg-historicos/', views.importar_crg_historicos_view, name='importar_crg_historicos'),
     path('edital/<int:edital_id>/homologar-todas/', views.homologar_todas_pendencias_view, name='homologar_todas'),
     path('candidato/<int:candidato_id>/confirmar/', views.confirmar_candidato_view, name='confirmar_candidato'),
+    path('candidato/<int:candidato_id>/remover/', views.remover_candidato_view, name='remover_candidato'),
     path('edital/<int:edital_id>/classificar/', views.processar_classificacao_view, name='processar_classificacao'),
     path('edital/<int:edital_id>/resultado/', views.resultado_final_view, name='resultado_final'),
     path('edital/<int:edital_id>/exportar/pdf/', views.exportar_pdf_view, name='exportar_pdf'),

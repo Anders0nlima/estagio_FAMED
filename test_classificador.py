@@ -859,3 +859,43 @@ def test_upload_planilhas_view_extrai_crgs_automaticamente():
     finally:
         edital.delete()
 
+
+def test_remover_candidato_auditoria():
+    """Valida que o botão Eliminar remove o candidato da seleção e gera registro em LogDecisao."""
+    import django
+    import os
+    os.environ.setdefault("DJANGO_SETTINGS_MODULE", "core.settings")
+    django.setup()
+
+    from django.test import Client
+    from estagios.models import Edital, Oportunidade, Candidato, Resultado, LogDecisao
+    from estagios.services import executar_classificacao_edital
+
+    edital = Edital.objects.create(titulo="Edital Teste Remoção", semestre="2027.1", ano=2027)
+    try:
+        Oportunidade.objects.create(
+            edital=edital, codigo_opcao="1", professor="Prof Teste", local="HUJBB",
+            periodo="Jan", vagas_totais=2, ciclos_permitidos="clinico", semestres_permitidos="5,6,7,8"
+        )
+        c_externo = Candidato.objects.create(
+            edital=edital, matricula="9999999", nome="Aluno Outra Instituicao",
+            crg_oficial=0.0, status_auditoria="VERMELHO", auditado_pelo_diretor=False,
+            op1="1", semestre=7, ciclo="clinico"
+        )
+        c_ufpa = Candidato.objects.create(
+            edital=edital, matricula="202309740001", nome="Aluno UFPA Valido",
+            crg_oficial=8.5, status_auditoria="VERDE", auditado_pelo_diretor=True,
+            op1="1", semestre=7, ciclo="clinico"
+        )
+
+        res = Client().post(f"/candidato/{c_externo.id}/remover/", follow=False)
+        assert res.status_code == 302
+        assert not Candidato.objects.filter(id=c_externo.id).exists()
+        assert LogDecisao.objects.filter(edital=edital, registro__icontains="Eliminação Manual").exists()
+
+        executar_classificacao_edital(edital)
+        assert Resultado.objects.filter(edital=edital).count() == 1
+        assert Resultado.objects.filter(edital=edital, candidato=c_ufpa, status="APROVADO").exists()
+    finally:
+        edital.delete()
+

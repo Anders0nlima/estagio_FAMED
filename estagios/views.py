@@ -285,6 +285,26 @@ def confirmar_candidato_view(request, candidato_id):
     return redirect('auditoria_semaforo', edital_id=candidato.edital.id)
 
 @login_required
+def remover_candidato_view(request, candidato_id):
+    """Elimina manualmente um candidato da concorrência durante a auditoria (ex.: outra instituição)."""
+    candidato = get_object_or_404(Candidato, id=candidato_id)
+    edital = candidato.edital
+    if request.method == 'POST':
+        nome_cand = candidato.nome
+        mat_cand = candidato.matricula
+        candidato.delete()
+        LogDecisao.objects.create(
+            edital=edital,
+            registro=f"[Eliminação Manual] Candidato(a) {nome_cand} ({mat_cand}) removido(a) do processo seletivo durante a auditoria."
+        )
+        messages.success(request, f"Candidato(a) {nome_cand} eliminado(a) do processo seletivo.")
+
+    referer = request.META.get('HTTP_REFERER')
+    if referer and 'auditoria' in referer:
+        return redirect(referer)
+    return redirect('auditoria_semaforo', edital_id=edital.id)
+
+@login_required
 def homologar_todas_pendencias_view(request, edital_id):
     edital = get_object_or_404(Edital, id=edital_id)
     qtd = confirmar_todas_pendencias(edital)
